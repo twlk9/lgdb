@@ -1,0 +1,354 @@
+L0CompactionTrigger: 4
+Starting manual compaction of database: new-trans-db
+Before: L0=99, L1=150, L2=0, Total=249
+time=2025-09-02T02:58:13.618Z level=INFO msg="Compaction worker started"
+time=2025-09-02T02:58:13.618Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:13.618Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:13.618Z level=INFO msg="pickL0Compaction debug" l0Files=99 trigger=4
+time=2025-09-02T02:58:13.618Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[411 412 413 415]" l1Files=[]
+time=2025-09-02T02:58:13.618Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:13.618Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:13.964Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=2 size=2089414 totalOutputFiles=1
+time=2025-09-02T02:58:14.275Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=3 size=2087224 totalOutputFiles=2
+time=2025-09-02T02:58:14.593Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=4 size=2093600 totalOutputFiles=3
+time=2025-09-02T02:58:14.857Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=5 size=1868498 totalOutputFiles=4
+time=2025-09-02T02:58:14.857Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:14.857Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[411 412 413 415]"
+time=2025-09-02T02:58:14.857Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[2 3 4 5]"
+time=2025-09-02T02:58:14.858Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.239427409s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:14.858Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:14.858Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:14.858Z level=INFO msg="pickL0Compaction debug" l0Files=95 trigger=4
+time=2025-09-02T02:58:14.858Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[416 418 419 420]" l1Files=[]
+time=2025-09-02T02:58:14.858Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:14.858Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:15.164Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=6 size=2104987 totalOutputFiles=1
+time=2025-09-02T02:58:15.463Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=7 size=2107765 totalOutputFiles=2
+time=2025-09-02T02:58:15.741Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=8 size=2111893 totalOutputFiles=3
+time=2025-09-02T02:58:16.063Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=9 size=1883494 totalOutputFiles=4
+time=2025-09-02T02:58:16.063Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:16.063Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[416 418 419 420]"
+time=2025-09-02T02:58:16.063Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[6 7 8 9]"
+time=2025-09-02T02:58:16.064Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.206355955s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:16.064Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:16.064Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:16.064Z level=INFO msg="pickL0Compaction debug" l0Files=91 trigger=4
+time=2025-09-02T02:58:16.064Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[422 423 425 426]" l1Files=[]
+time=2025-09-02T02:58:16.064Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:16.064Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:16.554Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=10 size=2106392 totalOutputFiles=1
+time=2025-09-02T02:58:16.885Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=11 size=2098892 totalOutputFiles=2
+time=2025-09-02T02:58:17.167Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=12 size=2099702 totalOutputFiles=3
+time=2025-09-02T02:58:17.429Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=13 size=1867449 totalOutputFiles=4
+time=2025-09-02T02:58:17.429Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:17.429Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[422 423 425 426]"
+time=2025-09-02T02:58:17.429Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[10 11 12 13]"
+time=2025-09-02T02:58:17.430Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.36551574s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:17.430Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:17.430Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:17.430Z level=INFO msg="pickL0Compaction debug" l0Files=87 trigger=4
+time=2025-09-02T02:58:17.430Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[427 429 430 431]" l1Files=[]
+time=2025-09-02T02:58:17.430Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:17.430Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:17.725Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=14 size=2099015 totalOutputFiles=1
+time=2025-09-02T02:58:18.012Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=15 size=2099530 totalOutputFiles=2
+time=2025-09-02T02:58:18.296Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=16 size=2104463 totalOutputFiles=3
+time=2025-09-02T02:58:18.562Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=17 size=1861960 totalOutputFiles=4
+time=2025-09-02T02:58:18.562Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:18.562Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[427 429 430 431]"
+time=2025-09-02T02:58:18.562Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[14 15 16 17]"
+time=2025-09-02T02:58:18.563Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.132967987s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:18.563Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:18.563Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:18.563Z level=INFO msg="pickL0Compaction debug" l0Files=83 trigger=4
+time=2025-09-02T02:58:18.563Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[433 434 436 437]" l1Files=[]
+time=2025-09-02T02:58:18.563Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:18.563Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:18.861Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=18 size=2095099 totalOutputFiles=1
+time=2025-09-02T02:58:19.152Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=19 size=2097151 totalOutputFiles=2
+time=2025-09-02T02:58:19.445Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=20 size=2104489 totalOutputFiles=3
+time=2025-09-02T02:58:19.697Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=21 size=1877423 totalOutputFiles=4
+time=2025-09-02T02:58:19.697Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:19.697Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[433 434 436 437]"
+time=2025-09-02T02:58:19.697Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[18 19 20 21]"
+time=2025-09-02T02:58:19.697Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.134799062s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:19.697Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:19.697Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:19.697Z level=INFO msg="pickL0Compaction debug" l0Files=79 trigger=4
+time=2025-09-02T02:58:19.697Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[438 440 441 443]" l1Files=[]
+time=2025-09-02T02:58:19.697Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:19.697Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:19.999Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=22 size=2100754 totalOutputFiles=1
+time=2025-09-02T02:58:20.289Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=23 size=2090719 totalOutputFiles=2
+time=2025-09-02T02:58:20.591Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=24 size=2088938 totalOutputFiles=3
+time=2025-09-02T02:58:20.847Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=25 size=1862603 totalOutputFiles=4
+time=2025-09-02T02:58:20.847Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:20.847Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[438 440 441 443]"
+time=2025-09-02T02:58:20.847Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[22 23 24 25]"
+time=2025-09-02T02:58:20.848Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.150040694s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:20.848Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:20.848Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:20.848Z level=INFO msg="pickL0Compaction debug" l0Files=75 trigger=4
+time=2025-09-02T02:58:20.848Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[444 445 447 448]" l1Files=[]
+time=2025-09-02T02:58:20.848Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:20.848Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:21.176Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=26 size=2086664 totalOutputFiles=1
+time=2025-09-02T02:58:21.458Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=27 size=2086371 totalOutputFiles=2
+time=2025-09-02T02:58:21.746Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=28 size=2088788 totalOutputFiles=3
+time=2025-09-02T02:58:21.991Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=29 size=1863901 totalOutputFiles=4
+time=2025-09-02T02:58:21.991Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:21.991Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[444 445 447 448]"
+time=2025-09-02T02:58:21.991Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[26 27 28 29]"
+time=2025-09-02T02:58:21.992Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.144309395s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:21.992Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:21.992Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:21.992Z level=INFO msg="pickL0Compaction debug" l0Files=71 trigger=4
+time=2025-09-02T02:58:21.992Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[450 451 452 454]" l1Files=[]
+time=2025-09-02T02:58:21.992Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:21.992Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:22.297Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=30 size=2091367 totalOutputFiles=1
+time=2025-09-02T02:58:22.588Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=31 size=2100567 totalOutputFiles=2
+time=2025-09-02T02:58:22.894Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=32 size=2107803 totalOutputFiles=3
+time=2025-09-02T02:58:23.147Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=33 size=1881849 totalOutputFiles=4
+time=2025-09-02T02:58:23.147Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:23.147Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[450 451 452 454]"
+time=2025-09-02T02:58:23.147Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[30 31 32 33]"
+time=2025-09-02T02:58:23.148Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.155786874s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:23.148Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:23.148Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:23.148Z level=INFO msg="pickL0Compaction debug" l0Files=67 trigger=4
+time=2025-09-02T02:58:23.148Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[455 457 458 459]" l1Files=[]
+time=2025-09-02T02:58:23.148Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:23.148Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:23.441Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=34 size=2110603 totalOutputFiles=1
+time=2025-09-02T02:58:23.726Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=35 size=2098508 totalOutputFiles=2
+time=2025-09-02T02:58:24.012Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=36 size=2098208 totalOutputFiles=3
+time=2025-09-02T02:58:24.259Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=37 size=1867519 totalOutputFiles=4
+time=2025-09-02T02:58:24.259Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:24.259Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[455 457 458 459]"
+time=2025-09-02T02:58:24.259Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[34 35 36 37]"
+time=2025-09-02T02:58:24.260Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.111661648s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:24.260Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:24.260Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:24.260Z level=INFO msg="pickL0Compaction debug" l0Files=63 trigger=4
+time=2025-09-02T02:58:24.260Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[461 462 464 465]" l1Files=[]
+time=2025-09-02T02:58:24.260Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:24.260Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:24.555Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=38 size=2098077 totalOutputFiles=1
+time=2025-09-02T02:58:24.839Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=39 size=2080842 totalOutputFiles=2
+time=2025-09-02T02:58:25.127Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=40 size=2084886 totalOutputFiles=3
+time=2025-09-02T02:58:25.377Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=41 size=1858206 totalOutputFiles=4
+time=2025-09-02T02:58:25.377Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:25.377Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[461 462 464 465]"
+time=2025-09-02T02:58:25.377Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[38 39 40 41]"
+time=2025-09-02T02:58:25.377Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.117730997s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:25.377Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:25.377Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:25.377Z level=INFO msg="pickL0Compaction debug" l0Files=59 trigger=4
+time=2025-09-02T02:58:25.377Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[466 468 469 471]" l1Files=[]
+time=2025-09-02T02:58:25.377Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:25.377Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:25.655Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=42 size=2085683 totalOutputFiles=1
+time=2025-09-02T02:58:25.947Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=43 size=2090186 totalOutputFiles=2
+time=2025-09-02T02:58:26.230Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=44 size=2097616 totalOutputFiles=3
+time=2025-09-02T02:58:26.489Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=45 size=1870099 totalOutputFiles=4
+time=2025-09-02T02:58:26.489Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:26.489Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[466 468 469 471]"
+time=2025-09-02T02:58:26.489Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[42 43 44 45]"
+time=2025-09-02T02:58:26.492Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.114303714s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:26.492Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:26.492Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:26.492Z level=INFO msg="pickL0Compaction debug" l0Files=55 trigger=4
+time=2025-09-02T02:58:26.492Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[472 473 475 476]" l1Files=[]
+time=2025-09-02T02:58:26.492Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:26.492Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:26.785Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=46 size=2103005 totalOutputFiles=1
+time=2025-09-02T02:58:27.076Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=47 size=2084176 totalOutputFiles=2
+time=2025-09-02T02:58:27.369Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=48 size=2083469 totalOutputFiles=3
+time=2025-09-02T02:58:27.637Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=49 size=1853855 totalOutputFiles=4
+time=2025-09-02T02:58:27.637Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:27.637Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[472 473 475 476]"
+time=2025-09-02T02:58:27.637Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[46 47 48 49]"
+time=2025-09-02T02:58:27.638Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.145901172s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:27.638Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:27.638Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:27.638Z level=INFO msg="pickL0Compaction debug" l0Files=51 trigger=4
+time=2025-09-02T02:58:27.638Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[478 479 480 482]" l1Files=[]
+time=2025-09-02T02:58:27.638Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:27.638Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:27.926Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=50 size=2083251 totalOutputFiles=1
+time=2025-09-02T02:58:28.215Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=51 size=2084232 totalOutputFiles=2
+time=2025-09-02T02:58:28.511Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=52 size=2083637 totalOutputFiles=3
+time=2025-09-02T02:58:28.754Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=53 size=1855598 totalOutputFiles=4
+time=2025-09-02T02:58:28.754Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:28.754Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[478 479 480 482]"
+time=2025-09-02T02:58:28.754Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[50 51 52 53]"
+time=2025-09-02T02:58:28.754Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.116410745s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:28.754Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:28.754Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:28.754Z level=INFO msg="pickL0Compaction debug" l0Files=47 trigger=4
+time=2025-09-02T02:58:28.754Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[483 484 486 487]" l1Files=[]
+time=2025-09-02T02:58:28.754Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:28.754Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:29.060Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=54 size=2087074 totalOutputFiles=1
+time=2025-09-02T02:58:29.346Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=55 size=2090587 totalOutputFiles=2
+time=2025-09-02T02:58:29.642Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=56 size=2094480 totalOutputFiles=3
+time=2025-09-02T02:58:29.890Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=57 size=1867202 totalOutputFiles=4
+time=2025-09-02T02:58:29.890Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:29.890Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[483 484 486 487]"
+time=2025-09-02T02:58:29.890Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[54 55 56 57]"
+time=2025-09-02T02:58:29.891Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.136264598s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:29.891Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:29.891Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:29.891Z level=INFO msg="pickL0Compaction debug" l0Files=43 trigger=4
+time=2025-09-02T02:58:29.891Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[489 490 491 493]" l1Files=[]
+time=2025-09-02T02:58:29.891Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:29.891Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:30.233Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=58 size=2102523 totalOutputFiles=1
+time=2025-09-02T02:58:30.544Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=59 size=2089324 totalOutputFiles=2
+time=2025-09-02T02:58:30.907Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=60 size=2084844 totalOutputFiles=3
+time=2025-09-02T02:58:31.207Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=61 size=1867526 totalOutputFiles=4
+time=2025-09-02T02:58:31.207Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:31.207Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[489 490 491 493]"
+time=2025-09-02T02:58:31.207Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[58 59 60 61]"
+time=2025-09-02T02:58:31.208Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.316960117s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:31.208Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:31.208Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:31.208Z level=INFO msg="pickL0Compaction debug" l0Files=39 trigger=4
+time=2025-09-02T02:58:31.208Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[494 496 497 498]" l1Files=[]
+time=2025-09-02T02:58:31.208Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:31.208Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:31.549Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=62 size=2105981 totalOutputFiles=1
+time=2025-09-02T02:58:31.872Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=63 size=2105860 totalOutputFiles=2
+time=2025-09-02T02:58:32.201Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=64 size=2106231 totalOutputFiles=3
+time=2025-09-02T02:58:32.490Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=65 size=1881151 totalOutputFiles=4
+time=2025-09-02T02:58:32.490Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:32.490Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[494 496 497 498]"
+time=2025-09-02T02:58:32.490Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[62 63 64 65]"
+time=2025-09-02T02:58:32.491Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.283133254s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:32.491Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:32.491Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:32.491Z level=INFO msg="pickL0Compaction debug" l0Files=35 trigger=4
+time=2025-09-02T02:58:32.491Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[500 501 503 504]" l1Files=[]
+time=2025-09-02T02:58:32.491Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:32.491Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:32.788Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=66 size=2105841 totalOutputFiles=1
+time=2025-09-02T02:58:33.069Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=67 size=2111613 totalOutputFiles=2
+time=2025-09-02T02:58:33.362Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=68 size=2116405 totalOutputFiles=3
+time=2025-09-02T02:58:33.623Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=69 size=1889817 totalOutputFiles=4
+time=2025-09-02T02:58:33.623Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:33.623Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[500 501 503 504]"
+time=2025-09-02T02:58:33.623Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[66 67 68 69]"
+time=2025-09-02T02:58:33.623Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.132410625s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:33.623Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:33.623Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:33.623Z level=INFO msg="pickL0Compaction debug" l0Files=31 trigger=4
+time=2025-09-02T02:58:33.623Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[505 507 508 509]" l1Files=[]
+time=2025-09-02T02:58:33.623Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:33.623Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:33.904Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=70 size=1949917 totalOutputFiles=1
+time=2025-09-02T02:58:34.160Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=71 size=1789620 totalOutputFiles=2
+time=2025-09-02T02:58:34.474Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=72 size=2097480 totalOutputFiles=3
+time=2025-09-02T02:58:34.733Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=73 size=1860332 totalOutputFiles=4
+time=2025-09-02T02:58:34.733Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:34.733Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[505 507 508 509]"
+time=2025-09-02T02:58:34.733Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[70 71 72 73]"
+time=2025-09-02T02:58:34.733Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.110020278s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:34.733Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:34.733Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:34.734Z level=INFO msg="pickL0Compaction debug" l0Files=27 trigger=4
+time=2025-09-02T02:58:34.734Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[511 512 514 515]" l1Files=[]
+time=2025-09-02T02:58:34.734Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:34.734Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:35.038Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=74 size=2096513 totalOutputFiles=1
+time=2025-09-02T02:58:35.306Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=75 size=2094281 totalOutputFiles=2
+time=2025-09-02T02:58:35.603Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=76 size=2097502 totalOutputFiles=3
+time=2025-09-02T02:58:35.852Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=77 size=1876140 totalOutputFiles=4
+time=2025-09-02T02:58:35.852Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:35.852Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[511 512 514 515]"
+time=2025-09-02T02:58:35.852Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[74 75 76 77]"
+time=2025-09-02T02:58:35.853Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.119025668s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:35.853Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:35.853Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:35.853Z level=INFO msg="pickL0Compaction debug" l0Files=23 trigger=4
+time=2025-09-02T02:58:35.853Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[516 518 519 521]" l1Files=[]
+time=2025-09-02T02:58:35.853Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:35.853Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:36.150Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=78 size=2097360 totalOutputFiles=1
+time=2025-09-02T02:58:36.428Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=79 size=2096564 totalOutputFiles=2
+time=2025-09-02T02:58:36.715Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=80 size=2100464 totalOutputFiles=3
+time=2025-09-02T02:58:36.962Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=81 size=1875024 totalOutputFiles=4
+time=2025-09-02T02:58:36.962Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:36.962Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[516 518 519 521]"
+time=2025-09-02T02:58:36.962Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[78 79 80 81]"
+time=2025-09-02T02:58:36.963Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.109953198s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:36.963Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:36.963Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:36.963Z level=INFO msg="pickL0Compaction debug" l0Files=19 trigger=4
+time=2025-09-02T02:58:36.963Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[522 523 525 526]" l1Files=[]
+time=2025-09-02T02:58:36.963Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:36.963Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:37.276Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=82 size=2108453 totalOutputFiles=1
+time=2025-09-02T02:58:37.567Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=83 size=2100020 totalOutputFiles=2
+time=2025-09-02T02:58:37.872Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=84 size=2093241 totalOutputFiles=3
+time=2025-09-02T02:58:38.132Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=85 size=1864804 totalOutputFiles=4
+time=2025-09-02T02:58:38.132Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:38.132Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[522 523 525 526]"
+time=2025-09-02T02:58:38.132Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[82 83 84 85]"
+time=2025-09-02T02:58:38.133Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.169932968s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:38.134Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:38.134Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:38.134Z level=INFO msg="pickL0Compaction debug" l0Files=15 trigger=4
+time=2025-09-02T02:58:38.134Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[528 529 530 532]" l1Files=[]
+time=2025-09-02T02:58:38.134Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:38.134Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:38.427Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=86 size=2092800 totalOutputFiles=1
+time=2025-09-02T02:58:38.712Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=87 size=2090606 totalOutputFiles=2
+time=2025-09-02T02:58:39.005Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=88 size=2088846 totalOutputFiles=3
+time=2025-09-02T02:58:39.261Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=89 size=1865276 totalOutputFiles=4
+time=2025-09-02T02:58:39.261Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:39.261Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[528 529 530 532]"
+time=2025-09-02T02:58:39.261Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[86 87 88 89]"
+time=2025-09-02T02:58:39.261Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.126756207s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:39.261Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:39.261Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:39.261Z level=INFO msg="pickL0Compaction debug" l0Files=11 trigger=4
+time=2025-09-02T02:58:39.261Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[533 535 536 537]" l1Files=[]
+time=2025-09-02T02:58:39.261Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:39.261Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:39.590Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=90 size=2092998 totalOutputFiles=1
+time=2025-09-02T02:58:39.903Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=91 size=2095519 totalOutputFiles=2
+time=2025-09-02T02:58:40.237Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=92 size=2099372 totalOutputFiles=3
+time=2025-09-02T02:58:40.531Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=93 size=1881180 totalOutputFiles=4
+time=2025-09-02T02:58:40.531Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:40.531Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[533 535 536 537]"
+time=2025-09-02T02:58:40.531Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[90 91 92 93]"
+time=2025-09-02T02:58:40.532Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.27066779s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:40.532Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:40.532Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:40.532Z level=INFO msg="pickL0Compaction debug" l0Files=7 trigger=4
+time=2025-09-02T02:58:40.532Z level=INFO msg=PICKED_L0_COMPACTION l0Files="[539 540 541 543]" l1Files=[]
+time=2025-09-02T02:58:40.532Z level=INFO msg="L0 compaction selected"
+time=2025-09-02T02:58:40.532Z level=INFO msg="Starting compaction" level=0 outputLevel=1 inputFiles=4
+time=2025-09-02T02:58:40.845Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=94 size=2114620 totalOutputFiles=1
+time=2025-09-02T02:58:41.175Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=95 size=2112709 totalOutputFiles=2
+time=2025-09-02T02:58:41.491Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=96 size=2100585 totalOutputFiles=3
+time=2025-09-02T02:58:41.777Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=97 size=1870151 totalOutputFiles=4
+time=2025-09-02T02:58:41.777Z level=INFO msg=COMPACTION_INSTALL_START level=0 outputLevel=1 inputFilesL0=4 inputFilesL1=0 outputFiles=4
+time=2025-09-02T02:58:41.777Z level=INFO msg=COMPACTION_REMOVING_FILES level=0 files="[539 540 541 543]"
+time=2025-09-02T02:58:41.777Z level=INFO msg=COMPACTION_ADDING_FILES level=1 files="[94 95 96 97]"
+time=2025-09-02T02:58:41.777Z level=INFO msg="Compaction completed" level=0 outputLevel=1 duration=1.245428126s bytesRead=0 bytesWritten=0
+time=2025-09-02T02:58:41.777Z level=INFO msg="Compaction work requested - starting compaction"
+time=2025-09-02T02:58:41.777Z level=INFO msg="pickCompaction called"
+time=2025-09-02T02:58:41.777Z level=INFO msg="pickL0Compaction debug" l0Files=3 trigger=4
+time=2025-09-02T02:58:41.777Z level=INFO msg="Not enough L0 files to trigger compaction" count=3 trigger=4
+time=2025-09-02T02:58:41.777Z level=INFO msg="Level compaction selected"
+time=2025-09-02T02:58:41.777Z level=INFO msg="Starting compaction" level=1 outputLevel=2 inputFiles=1
+time=2025-09-02T02:58:42.104Z level=INFO msg=COMPACTION_OUTPUT_FILE_CREATED fileNum=98 size=2110603 totalOutputFiles=1
+time=2025-09-02T02:58:42.104Z level=INFO msg=COMPACTION_INSTALL_START level=1 outputLevel=2 inputFilesL0=1 inputFilesL1=0 outputFiles=1
+time=2025-09-02T02:58:42.104Z level=INFO msg=COMPACTION_REMOVING_FILES level=1 files=[34]
+time=2025-09-02T02:58:42.104Z level=INFO msg=COMPACTION_ADDING_FILES level=2 files=[98]
+time=2025-09-02T02:58:42.105Z level=INFO msg="Compaction completed" level=1 outputLevel=2 duration=327.206408ms bytesRead=0 bytesWritten=0
+After:  L0=3, L1=245, L2=1, Total=249
+Compaction completed successfully
+time=2025-09-02T02:58:42.105Z level=INFO msg="Compaction worker shutting down"
