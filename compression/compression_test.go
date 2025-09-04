@@ -1,0 +1,479 @@
+package compression
+
+import (
+	"testing"
+
+	"github.com/klauspost/compress/snappy"
+)
+
+func TestCompressionTypes(t *testing.T) {
+	tests := []struct {
+		compType Type
+		expected string
+	}{
+		{None, "none"},
+		{Snappy, "snappy"},
+		{Zstd, "zstd"},
+		{Type(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.compType.String(); got != tt.expected {
+			t.Errorf("Type.String() = %v, want %v", got, tt.expected)
+		}
+	}
+}
+
+func TestNoCompression(t *testing.T) {
+	config := Config{Type: None, MinReductionPercent: 0}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	if compressor.Type() != None {
+		t.Errorf("Expected compression type %v, got %v", None, compressor.Type())
+	}
+
+	// Test compression
+	src := []byte("Hello, World!")
+	dst := make([]byte, 0, len(src))
+
+	compressed, wasCompressed, err := compressor.Compress(dst, src)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	if wasCompressed {
+		t.Error("No compression should not report as compressed")
+	}
+
+	if string(compressed) != string(src) {
+		t.Errorf("No compression should return original data, got %v", compressed)
+	}
+
+	// Test decompression
+	decompressed, err := compressor.Decompress(nil, compressed)
+	if err != nil {
+		t.Fatalf("Decompression failed: %v", err)
+	}
+
+	if string(decompressed) != string(src) {
+		t.Errorf("Decompressed data doesn't match original: got %v, want %v", decompressed, src)
+	}
+}
+
+func TestSnappyCompression(t *testing.T) {
+	config := Config{Type: Snappy, MinReductionPercent: 0}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	if compressor.Type() != Snappy {
+		t.Errorf("Expected compression type %v, got %v", Snappy, compressor.Type())
+	}
+
+	// Test with compressible data
+	src := make([]byte, 1000)
+	for i := range src {
+		src[i] = byte(i % 10) // Highly compressible pattern
+	}
+
+	compressed, wasCompressed, err := compressor.Compress(nil, src)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	if !wasCompressed {
+		t.Error("Snappy compression should report as compressed for compressible data")
+	}
+
+	if len(compressed) >= len(src) {
+		t.Errorf("Compressed data should be smaller than original: got %d, original %d", len(compressed), len(src))
+	}
+
+	// Test decompression
+	decompressed, err := compressor.Decompress(nil, compressed)
+	if err != nil {
+		t.Fatalf("Decompression failed: %v", err)
+	}
+
+	if len(decompressed) != len(src) {
+		t.Errorf("Decompressed data length mismatch: got %d, want %d", len(decompressed), len(src))
+	}
+
+	for i := range src {
+		if decompressed[i] != src[i] {
+			t.Errorf("Decompressed data mismatch at index %d: got %v, want %v", i, decompressed[i], src[i])
+		}
+	}
+}
+
+func TestSnappyMinReductionThreshold(t *testing.T) {
+	// Set high minimum reduction threshold
+	config := Config{Type: Snappy, MinReductionPercent: 50}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Use truly random data that won't compress well
+	src := make([]byte, 100)
+	for i := range src {
+		src[i] = byte(i ^ (i * 7) ^ (i * 13)) // Pseudo-random pattern
+	}
+
+	compressed, wasCompressed, err := compressor.Compress(nil, src)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	// Check if this data actually compresses poorly
+	testCompressed := snappy.Encode(nil, src)
+	reductionPercent := (len(src) - len(testCompressed)) * 100 / len(src)
+
+	t.Logf("Original size: %d, compressed size: %d, reduction: %d%%", len(src), len(testCompressed), reductionPercent)
+
+	if reductionPercent >= 50 {
+		t.Skipf("Test data compressed too well (%d%% reduction), skipping threshold test", reductionPercent)
+	}
+
+	if wasCompressed {
+		t.Errorf("Compression should be skipped when reduction threshold is not met (got %d%% reduction, threshold %d%%)", reductionPercent, 50)
+	}
+
+	if string(compressed) != string(src) {
+		t.Errorf("When compression is skipped, should return original data")
+	}
+}
+
+func TestCompressBlock(t *testing.T) {
+	config := Config{Type: Snappy, MinReductionPercent: 0}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Test with compressible data (above 1024 byte threshold)
+	src := make([]byte, 2000) // Increased size to exceed 1KB threshold
+	for i := range src {
+		src[i] = byte('A') // Highly compressible
+	}
+
+	compressed, compressionType, err := CompressBlock(compressor, nil, src)
+	if err != nil {
+		t.Fatalf("CompressBlock failed: %v", err)
+	}
+
+	if compressionType != BlockSnappy {
+		t.Errorf("Expected compression type %v, got %v", BlockSnappy, compressionType)
+	}
+
+	if len(compressed) >= len(src) {
+		t.Errorf("Compressed block should be smaller: got %d, original %d", len(compressed), len(src))
+	}
+}
+
+func TestCompressBlockThreshold(t *testing.T) {
+	config := Config{Type: Snappy, MinReductionPercent: 0}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Test with small data (below 1024 byte threshold)
+	src := make([]byte, 500) // Below 1KB threshold
+	for i := range src {
+		src[i] = byte('A') // Even highly compressible data should be skipped
+	}
+
+	compressed, compressionType, err := CompressBlock(compressor, nil, src)
+	if err != nil {
+		t.Fatalf("CompressBlock failed: %v", err)
+	}
+
+	// Should skip compression due to size threshold
+	if compressionType != BlockNone {
+		t.Errorf("Expected compression type %v for small block, got %v", BlockNone, compressionType)
+	}
+
+	if string(compressed) != string(src) {
+		t.Errorf("Small block should be returned uncompressed")
+	}
+}
+
+func TestDecompressBlock(t *testing.T) {
+	// Test no compression
+	src := []byte("Hello, World!")
+	decompressed, err := DecompressBlock(nil, src, BlockNone)
+	if err != nil {
+		t.Fatalf("DecompressBlock failed for no compression: %v", err)
+	}
+
+	if string(decompressed) != string(src) {
+		t.Errorf("DecompressBlock with no compression should return original data")
+	}
+
+	// Test Snappy compression
+	config := Config{Type: Snappy, MinReductionPercent: 0}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Create compressible data
+	original := make([]byte, 1000)
+	for i := range original {
+		original[i] = byte('A')
+	}
+
+	// Compress it
+	compressed, wasCompressed, err := compressor.Compress(nil, original)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	if !wasCompressed {
+		t.Fatal("Expected data to be compressed")
+	}
+
+	// Decompress using DecompressBlock
+	decompressed, err = DecompressBlock(nil, compressed, BlockSnappy)
+	if err != nil {
+		t.Fatalf("DecompressBlock failed for Snappy: %v", err)
+	}
+
+	if len(decompressed) != len(original) {
+		t.Errorf("Decompressed length mismatch: got %d, want %d", len(decompressed), len(original))
+	}
+
+	for i := range original {
+		if decompressed[i] != original[i] {
+			t.Errorf("Decompressed data mismatch at index %d", i)
+		}
+	}
+}
+
+func TestInvalidCompressionType(t *testing.T) {
+	// Test invalid compression type in config
+	config := Config{Type: Type(99), MinReductionPercent: 0}
+	_, err := NewCompressor(config)
+	if err == nil {
+		t.Error("Expected error for invalid compression type")
+	}
+
+	// Test invalid compression type in DecompressBlock
+	_, err = DecompressBlock(nil, []byte("test"), 99)
+	if err == nil {
+		t.Error("Expected error for invalid block compression type")
+	}
+}
+
+func TestZstdCompression(t *testing.T) {
+	testCases := []struct {
+		name   string
+		level  ZstdLevel
+		config Config
+	}{
+		{
+			name:   "ZstdFastest",
+			level:  ZstdFastest,
+			config: Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdFastest},
+		},
+		{
+			name:   "ZstdDefault",
+			level:  ZstdDefault,
+			config: Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdDefault},
+		},
+		{
+			name:   "ZstdBetter",
+			level:  ZstdBetter,
+			config: Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdBetter},
+		},
+		{
+			name:   "ZstdBest",
+			level:  ZstdBest,
+			config: Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdBest},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			compressor, err := NewCompressor(tc.config)
+			if err != nil {
+				t.Fatalf("Failed to create Zstd compressor: %v", err)
+			}
+
+			if compressor.Type() != Zstd {
+				t.Errorf("Expected compression type %v, got %v", Zstd, compressor.Type())
+			}
+
+			// Test with compressible data
+			src := make([]byte, 1000)
+			for i := range src {
+				src[i] = byte(i % 10) // Highly compressible pattern
+			}
+
+			compressed, wasCompressed, err := compressor.Compress(nil, src)
+			if err != nil {
+				t.Fatalf("Compression failed: %v", err)
+			}
+
+			if !wasCompressed {
+				t.Error("Zstd compression should report as compressed for compressible data")
+			}
+
+			if len(compressed) >= len(src) {
+				t.Errorf("Compressed data should be smaller than original: got %d, original %d", len(compressed), len(src))
+			}
+
+			// Test decompression
+			decompressed, err := compressor.Decompress(nil, compressed)
+			if err != nil {
+				t.Fatalf("Decompression failed: %v", err)
+			}
+
+			if len(decompressed) != len(src) {
+				t.Errorf("Decompressed data length mismatch: got %d, want %d", len(decompressed), len(src))
+			}
+
+			for i := range src {
+				if decompressed[i] != src[i] {
+					t.Errorf("Decompressed data mismatch at index %d: got %v, want %v", i, decompressed[i], src[i])
+				}
+			}
+		})
+	}
+}
+
+func TestZstdMinReductionThreshold(t *testing.T) {
+	// Set high minimum reduction threshold
+	config := Config{Type: Zstd, MinReductionPercent: 50, ZstdLevel: ZstdDefault}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Use truly random data that won't compress well
+	src := make([]byte, 100)
+	for i := range src {
+		src[i] = byte(i ^ (i * 7) ^ (i * 13)) // Pseudo-random pattern
+	}
+
+	compressed, wasCompressed, err := compressor.Compress(nil, src)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	// Check if this data actually compresses poorly with Zstd
+	testCompressor, _ := NewCompressor(Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdDefault})
+	testCompressed, _, _ := testCompressor.Compress(nil, src)
+	reductionPercent := (len(src) - len(testCompressed)) * 100 / len(src)
+
+	t.Logf("Original size: %d, compressed size: %d, reduction: %d%%", len(src), len(testCompressed), reductionPercent)
+
+	if reductionPercent >= 50 {
+		t.Skipf("Test data compressed too well (%d%% reduction), skipping threshold test", reductionPercent)
+	}
+
+	if wasCompressed {
+		t.Errorf("Compression should be skipped when reduction threshold is not met (got %d%% reduction, threshold %d%%)", reductionPercent, 50)
+	}
+
+	if string(compressed) != string(src) {
+		t.Errorf("When compression is skipped, should return original data")
+	}
+}
+
+func TestZstdConfigFunctions(t *testing.T) {
+	testCases := []struct {
+		name          string
+		configFunc    func() Config
+		expectedType  Type
+		expectedLevel ZstdLevel
+	}{
+		{"ZstdFastConfig", ZstdFastConfig, Zstd, ZstdFastest},
+		{"ZstdBalancedConfig", ZstdBalancedConfig, Zstd, ZstdDefault},
+		{"ZstdBestConfig", ZstdBestConfig, Zstd, ZstdBest},
+		{"SnappyConfig", SnappyConfig, Snappy, ZstdDefault},             // Level doesn't matter for Snappy
+		{"NoCompressionConfig", NoCompressionConfig, None, ZstdDefault}, // Level doesn't matter for None
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			config := tc.configFunc()
+
+			if config.Type != tc.expectedType {
+				t.Errorf("Expected type %v, got %v", tc.expectedType, config.Type)
+			}
+
+			if config.Type == Zstd && config.ZstdLevel != tc.expectedLevel {
+				t.Errorf("Expected Zstd level %v, got %v", tc.expectedLevel, config.ZstdLevel)
+			}
+
+			// Test that we can create a compressor with this config
+			compressor, err := NewCompressor(config)
+			if err != nil {
+				t.Fatalf("Failed to create compressor with config: %v", err)
+			}
+
+			if compressor.Type() != tc.expectedType {
+				t.Errorf("Compressor type mismatch: expected %v, got %v", tc.expectedType, compressor.Type())
+			}
+		})
+	}
+}
+
+func TestZstdDecompressBlock(t *testing.T) {
+	// Test Zstd decompression in DecompressBlock function
+	config := Config{Type: Zstd, MinReductionPercent: 0, ZstdLevel: ZstdDefault}
+	compressor, err := NewCompressor(config)
+	if err != nil {
+		t.Fatalf("Failed to create compressor: %v", err)
+	}
+
+	// Create compressible data
+	original := make([]byte, 1000)
+	for i := range original {
+		original[i] = byte('A')
+	}
+
+	// Compress it
+	compressed, wasCompressed, err := compressor.Compress(nil, original)
+	if err != nil {
+		t.Fatalf("Compression failed: %v", err)
+	}
+
+	if !wasCompressed {
+		t.Fatal("Expected data to be compressed")
+	}
+
+	// Decompress using DecompressBlock
+	decompressed, err := DecompressBlock(nil, compressed, BlockZstd)
+	if err != nil {
+		t.Fatalf("DecompressBlock failed for Zstd: %v", err)
+	}
+
+	if len(decompressed) != len(original) {
+		t.Errorf("Decompressed length mismatch: got %d, want %d", len(decompressed), len(original))
+	}
+
+	for i := range original {
+		if decompressed[i] != original[i] {
+			t.Errorf("Decompressed data mismatch at index %d", i)
+		}
+	}
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+
+	if config.Type != Snappy {
+		t.Errorf("Default compression type should be Snappy, got %v", config.Type)
+	}
+
+	if config.MinReductionPercent != 12 {
+		t.Errorf("Default min reduction percent should be 12, got %v", config.MinReductionPercent)
+	}
+}
