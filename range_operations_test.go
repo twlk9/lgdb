@@ -413,8 +413,7 @@ func TestIteratorSeek(t *testing.T) {
 	defer iter.Close()
 
 	// Test seeking to existing key
-	ikey := keys.NewQueryKey([]byte("key5"))
-	iter.Seek(ikey)
+	iter.Seek([]byte("key5"))
 	if !iter.Valid() {
 		t.Fatalf("Expected iterator to be valid after seek")
 	}
@@ -423,8 +422,7 @@ func TestIteratorSeek(t *testing.T) {
 	}
 
 	// Test seeking to non-existing key (should find next key)
-	ikey = keys.NewQueryKey([]byte("key4"))
-	iter.Seek(ikey)
+	iter.Seek([]byte("key4"))
 	if !iter.Valid() {
 		t.Fatalf("Expected iterator to be valid after seek")
 	}
@@ -433,8 +431,7 @@ func TestIteratorSeek(t *testing.T) {
 	}
 
 	// Test seeking past all keys
-	ikey = keys.NewQueryKey([]byte("key99"))
-	iter.Seek(ikey)
+	iter.Seek([]byte("key99"))
 	if iter.Valid() {
 		t.Errorf("Expected iterator to be invalid after seeking past all keys")
 	}

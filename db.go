@@ -549,9 +549,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	iter := db.NewIterator()
 	defer iter.Close()
 
-	// Seek to the target key
-	targetKey := keys.NewQueryKey(key)
-	iter.Seek(targetKey)
+	iter.Seek(key)
 
 	// Check if we found the exact key
 	if iter.Valid() && bytes.Equal(iter.Key(), key) {

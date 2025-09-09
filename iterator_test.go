@@ -35,7 +35,7 @@ func TestIteratorEdgeCasesEmpty(t *testing.T) {
 		fn   func()
 	}{
 		{"SeekToFirst", func() { iter.SeekToFirst() }},
-		{"Seek", func() { iter.Seek(keys.NewQueryKey([]byte("any_key"))) }},
+		{"Seek", func() { iter.Seek([]byte("any_key")) }},
 	}
 
 	for _, tc := range testCases {
@@ -97,7 +97,7 @@ func TestIteratorEdgeCasesSingleKey(t *testing.T) {
 	}
 
 	// Test seeking to the key
-	iter.Seek(keys.NewQueryKey(key))
+	iter.Seek(key)
 	if !iter.Valid() {
 		t.Error("Seek should be valid with single key")
 	}
@@ -150,7 +150,7 @@ func TestIteratorSeekEdgeCases(t *testing.T) {
 
 	for _, test := range seekTests {
 		t.Run(test.name, func(t *testing.T) {
-			iter.Seek(keys.NewQueryKey([]byte(test.seekKey)))
+			iter.Seek([]byte(test.seekKey))
 
 			if test.shouldBeValid {
 				if !iter.Valid() {
@@ -297,7 +297,7 @@ func TestIteratorForwardBoundaryEdgeCases(t *testing.T) {
 	}
 
 	// Test seeking to various positions
-	iter.Seek(keys.NewQueryKey([]byte("05")))
+	iter.Seek([]byte("05"))
 	if !iter.Valid() || string(iter.Key()) != "05" {
 		t.Error("Seek to '05' should position at that key")
 	}
@@ -385,7 +385,7 @@ func TestIteratorSpecialCharacterKeys(t *testing.T) {
 
 	// Test seeking to special characters
 	for _, key := range specialKeys {
-		iter.Seek(keys.NewQueryKey([]byte(key)))
+		iter.Seek([]byte(key))
 		if !iter.Valid() {
 			t.Errorf("Seek to special key %q should be valid", key)
 			continue
