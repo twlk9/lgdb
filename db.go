@@ -408,7 +408,7 @@ func (db *DB) rotateWAL() error {
 	}
 	// Calculate as num memtables * writebuffersize + 1 for wal
 	// storage
-	maxsize := max(2<<26, db.options.WriteBufferSize*db.options.MaxMemtables+1)
+	maxsize := db.options.WriteBufferSize*db.options.MaxMemtables+1
 	if db.wal.Size() > int64(maxsize) {
 		// Rotate WAL (create new WAL file)
 		ogwal := db.wal
