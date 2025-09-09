@@ -101,9 +101,6 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range) *DBIterator {
 		}
 	}
 
-	// Range tombstones are now handled directly by regular memtable iterators
-	// No need for separate RangeTombstoneIterator
-
 	// Create and return the final iterator with version reference
 	return &DBIterator{
 		mergeIter: mergeIter,
@@ -135,9 +132,10 @@ func (it *DBIterator) SeekToFirst() {
 }
 
 // Seek positions the iterator at the first element >= target.
-func (it *DBIterator) Seek(target keys.EncodedKey) {
+func (it *DBIterator) Seek(target []byte) {
+	encTarget := keys.NewQueryKey(target)
 	it.err = nil
-	it.mergeIter.Seek(target)
+	it.mergeIter.Seek(encTarget)
 
 	// Skip over any keys that are covered by range tombstones
 	it.valid = it.mergeIter.Valid()
