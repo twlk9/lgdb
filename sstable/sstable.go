@@ -142,6 +142,11 @@ func NewSSTableWriter(opts SSTableOpts) (*SSTableWriter, error) {
 	}, nil
 }
 
+// Path returns full path and file name
+func (w SSTableWriter) Path() string {
+	return w.path
+}
+
 // Add adds a key-value pair to the SSTable
 // key should be an encoded internal key ([]byte)
 func (w *SSTableWriter) Add(key keys.EncodedKey, value []byte) error {

@@ -2,8 +2,10 @@ package memtable
 
 import (
 	"math/rand/v2"
+	"os"
 	"sync"
 
+	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/keys"
 )
 
@@ -26,6 +28,7 @@ type MemTable struct {
 	maxHeight int
 	n         int
 	keyBuf    []byte // reusable buffer for key encoding
+	epoch     uint64 // Tracking for WAL lifetime management
 }
 
 func NewMemtable(writeBufferSize int) *MemTable {
@@ -43,6 +46,7 @@ func NewMemtable(writeBufferSize int) *MemTable {
 		keyBuf:    make([]byte, 0, 256), // Initial capacity for typical key sizes
 	}
 	mt.md[posHeight] = tMaxHeight
+	mt.epoch = epoch.EnterEpoch()
 	return mt
 }
 
@@ -156,6 +160,23 @@ func (mt *MemTable) MemoryUsage() int {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	return len(mt.d) + len(mt.md)
+}
+
+// RegisterWAL takes a wal file path and registers it will epoch
+// management so it can't be deleted while this memtable is still
+// active.
+func (mt *MemTable) RegisterWAL(path string) {
+	if !epoch.ResourceExists(path) {
+		epoch.RegisterResource(path, mt.epoch, func() error {
+			return os.Remove(path)
+		})
+	}
+}
+
+// Close marks the epoch as finished. Should trigger any WAL cleanup
+// once all references have completed.
+func (mt *MemTable) Close() {
+	epoch.ExitEpoch(mt.epoch)
 }
 
 // MemTableIterator represents an iterator over the memtable.

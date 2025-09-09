@@ -94,6 +94,11 @@ func NewSSTableReader(path string, logger *slog.Logger) (*SSTableReader, error) 
 	return reader, nil
 }
 
+// Path simply returns full name/file for the sstable reader
+func (r SSTableReader) Path() string {
+	return r.path
+}
+
 // readFooter reads and parses the SSTable footer (Pebble format)
 func (r *SSTableReader) readFooter() error {
 	if r.size < FooterSize {

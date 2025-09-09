@@ -42,6 +42,7 @@ func (db *DB) removeFromImmutableMemtables(targetMemtable *memtable.MemTable) bo
 			// Remove by preserving order - shift left and truncate
 			copy(db.immutableMemtables[i:], db.immutableMemtables[i+1:])
 			db.immutableMemtables = db.immutableMemtables[:len(db.immutableMemtables)-1]
+			targetMemtable.Close()
 			return true
 		}
 	}
@@ -408,7 +409,7 @@ func (db *DB) rotateWAL() error {
 	}
 	// Calculate as num memtables * writebuffersize + 1 for wal
 	// storage
-	maxsize := db.options.WriteBufferSize*db.options.MaxMemtables+1
+	maxsize := db.options.WriteBufferSize*db.options.MaxMemtables + 1
 	if db.wal.Size() > int64(maxsize) {
 		// Rotate WAL (create new WAL file)
 		ogwal := db.wal
@@ -464,6 +465,9 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 			db.logger.Error("rotating WAL failed during memtable rotation in write", "error", walerr)
 		}
 		newmemt := memtable.NewMemtable(db.options.WriteBufferSize)
+		if db.wal != nil {
+			newmemt.RegisterWAL(db.wal.Path())
+		}
 		db.rotateMemtable(newmemt)
 		db.updateCurrentVersion()
 		db.flushTrigger.Signal()
@@ -649,6 +653,7 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 		if err != nil {
 			return 0, err
 		}
+		db.memtable.RegisterWAL(reader.Path())
 
 		for {
 			record, err := reader.ReadRecord()
@@ -760,14 +765,11 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 
 	// Log the file creation with key range and conversion stats
 	if len(firstKey) > 0 && len(lastKey) > 0 {
-		db.logger.Info("SSTABLE_CREATED",
+		db.logger.Debug("FLUSH_CONVERSION_COMPLETE",
 			"file_number", fileNumber,
 			"entries", entriesWritten,
 			"first_key", int(firstKey[0]),
-			"last_key", int(lastKey[0]))
-
-		db.logger.Debug("FLUSH_CONVERSION_COMPLETE",
-			"file_number", fileNumber,
+			"last_key", int(lastKey[0]),
 			"memtable_entries_in", memtableSize,
 			"sstable_entries_out", entriesWritten,
 			"sstable_size_bytes", fileMetadata.Size,

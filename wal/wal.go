@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/twlk9/lgdb/bufferpool"
+	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/keys"
 )
 
@@ -51,7 +52,7 @@ type WALOpts struct {
 
 // WAL represents the Write-Ahead Log
 type WAL struct {
-	path    string
+	path    string // full path of file with file name
 	file    *os.File
 	writer  *bufio.Writer
 	mu      sync.Mutex
@@ -96,6 +97,11 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 		bytesPerSync:    opts.BytesPerSync,
 		syncQueue:       &walSyncQueue{},
 	}, nil
+}
+
+// Path returns the full file name with path
+func (w *WAL) Path() string {
+	return w.path
 }
 
 // Size returns the bytes written
@@ -254,11 +260,6 @@ func (w *WAL) Sync() error {
 	return <-w.SyncAsync()
 }
 
-// Path just retuns the path of the wal file
-func (w *WAL) Path() string {
-	return w.path
-}
-
 // processSyncQueue processes all pending sync requests
 func (w *WAL) processSyncQueue() {
 	w.mu.Lock()
@@ -327,16 +328,17 @@ func (w *WAL) Close() error {
 		}
 		req.done <- fmt.Errorf("WAL is closed")
 	}
-
 	if err := w.writer.Flush(); err != nil {
 		return err
 	}
-
 	if err := w.file.Sync(); err != nil {
 		return err
 	}
-
-	return w.file.Close()
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+	epoch.MarkResourceForCleanup(w.path)
+	return nil
 }
 
 // WALReader reads records from a WAL file
@@ -358,6 +360,11 @@ func NewWALReader(path string) (*WALReader, error) {
 		reader: bufio.NewReader(file),
 		path:   path,
 	}, nil
+}
+
+// Path returns full file path
+func (r *WALReader) Path() string {
+	return r.path
 }
 
 // ReadRecord reads the next record from the WAL
@@ -422,44 +429,4 @@ func (r *WALReader) ReadRecord() (*WALRecord, error) {
 // Close closes the WAL reader
 func (r *WALReader) Close() error {
 	return r.file.Close()
-}
-
-// RecoverFromWAL recovers the memtable from WAL files
-// This function will be called from the main lgdb package
-func RecoverFromWAL(dir string, memtable any) (uint64, error) {
-	walFiles, err := filepath.Glob(filepath.Join(dir, "*.wal"))
-	if err != nil {
-		return 0, err
-	}
-
-	var maxSeq uint64
-
-	for _, walFile := range walFiles {
-		reader, err := NewWALReader(walFile)
-		if err != nil {
-			return 0, err
-		}
-
-		for {
-			record, err := reader.ReadRecord()
-			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
-				reader.Close()
-				return 0, err
-			}
-
-			if record.Seq > maxSeq {
-				maxSeq = record.Seq
-			}
-
-			// The actual recovery logic will be handled in the main package
-			// We just collect the records here
-		}
-
-		reader.Close()
-	}
-
-	return maxSeq, nil
 }
