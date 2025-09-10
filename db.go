@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -637,6 +638,31 @@ func (db *DB) DeletePrefix(prefix []byte) error {
 	return db.DeleteRange(prefix, endKey)
 }
 
+// sortWALFiles numerically sorts a slice of WAL file paths.
+func sortWALFiles(files []string) {
+	sort.Slice(files, func(i, j int) bool {
+		// Get the base filename (e.g., "000001.wal")
+		nameI := filepath.Base(files[i])
+		nameJ := filepath.Base(files[j])
+
+		// Strip the extension to get the number string (e.g., "000001")
+		numStrI := strings.TrimSuffix(nameI, ".wal")
+		numStrJ := strings.TrimSuffix(nameJ, ".wal")
+
+		// Convert the number strings to integers for comparison
+		numI, errI := strconv.Atoi(numStrI)
+		numJ, errJ := strconv.Atoi(numStrJ)
+
+		// If conversion fails, default to a string comparison.
+		// This is a good fallback for unexpected filenames.
+		if errI != nil || errJ != nil {
+			return nameI < nameJ
+		}
+
+		return numI < numJ
+	})
+}
+
 // recoverFromWAL recovers the memtable from WAL files.
 // Replays all WAL records to rebuild memtable state after a restart.
 // Returns the highest sequence number found in the WAL.
@@ -645,9 +671,9 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 	if globerr != nil {
 		return 0, globerr
 	}
+	sortWALFiles(walFiles)
 
 	var maxSeq uint64
-
 	var reader *wal.WALReader
 	var err error
 	for _, walFile := range walFiles {
