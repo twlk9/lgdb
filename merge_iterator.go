@@ -143,6 +143,16 @@ func (it *MergeIterator) findAndSetCurrent() {
 		if it.isValidEntry(it.winningKey) {
 			it.current = minItem
 			return
+		} else {
+			// Check if key is past upper bound - if so, we're done
+			if it.bounds != nil && it.bounds.Limit != nil {
+				userKey := it.winningKey.UserKey()
+				if userKey.Compare(it.bounds.Limit.UserKey()) >= 0 {
+					// Past upper bound - end iteration
+					it.current = nil
+					return
+				}
+			}
 		}
 
 		// Entry filtered out, advance and try again
