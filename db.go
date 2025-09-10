@@ -191,6 +191,7 @@ func Open(opts *Options) (*DB, error) {
 	var maxSeq uint64
 	if !opts.ReadOnly {
 		var err error
+		// sets wal if one was already existing
 		maxSeq, err = db.recoverFromWAL()
 		if err != nil {
 			return nil, err
@@ -640,15 +641,17 @@ func (db *DB) DeletePrefix(prefix []byte) error {
 // Replays all WAL records to rebuild memtable state after a restart.
 // Returns the highest sequence number found in the WAL.
 func (db *DB) recoverFromWAL() (uint64, error) {
-	walFiles, err := filepath.Glob(filepath.Join(db.path, "*.wal"))
-	if err != nil {
-		return 0, err
+	walFiles, globerr := filepath.Glob(filepath.Join(db.path, "*.wal"))
+	if globerr != nil {
+		return 0, globerr
 	}
 
 	var maxSeq uint64
 
+	var reader *wal.WALReader
+	var err error
 	for _, walFile := range walFiles {
-		reader, err := wal.NewWALReader(walFile)
+		reader, err = wal.NewWALReader(walFile)
 		if err != nil {
 			return 0, err
 		}
@@ -675,6 +678,28 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 		reader.Close()
 	}
 
+	// set wal if needed
+	if !db.options.ReadOnly && !db.options.DisableWAL {
+		if reader == nil {
+			wo := wal.WALOpts{
+				Path:            db.options.Path,
+				FileNum:         db.versions.NewFileNumber(),
+				SyncInterval:    db.options.WALSyncInterval,
+				MinSyncInterval: db.options.WALMinSyncInterval,
+				BytesPerSync:    db.options.WALBytesPerSync,
+			}
+			db.wal, err = wal.NewWAL(wo)
+			if err != nil {
+				return maxSeq, err
+			}
+			db.memtable.RegisterWAL(db.wal.Path())
+		} else {
+			db.wal, err = wal.Open(reader.Path(), db.options.WALSyncInterval, db.options.WALMinSyncInterval, db.options.WALBytesPerSync)
+			if err != nil {
+				return maxSeq, err
+			}
+		}
+	}
 	return maxSeq, nil
 }
 
