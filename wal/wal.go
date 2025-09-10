@@ -52,12 +52,11 @@ type WALOpts struct {
 
 // WAL represents the Write-Ahead Log
 type WAL struct {
-	path    string // full path of file with file name
-	file    *os.File
-	writer  *bufio.Writer
-	mu      sync.Mutex
-	closed  bool
-	fileNum uint64
+	path   string // full path of file with file name
+	file   *os.File
+	writer *bufio.Writer
+	mu     sync.Mutex
+	closed bool
 
 	// Sync timing options
 	syncInterval    time.Duration
@@ -91,10 +90,28 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 		path:            walPath,
 		file:            file,
 		writer:          bufio.NewWriter(file),
-		fileNum:         opts.FileNum,
 		syncInterval:    opts.SyncInterval,
 		minSyncInterval: opts.MinSyncInterval,
 		bytesPerSync:    opts.BytesPerSync,
+		syncQueue:       &walSyncQueue{},
+	}, nil
+}
+
+// Open uses an existing wal file. Takes the full path of the file,
+// sync interval, minimum sync interval and bytes per sync as
+// arguments
+func Open(path string, syncInt, minSyncInt time.Duration, bytesPerSync int) (*WAL, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return &WAL{
+		path:            path,
+		file:            file,
+		writer:          bufio.NewWriter(file),
+		syncInterval:    syncInt,
+		minSyncInterval: minSyncInt,
+		bytesPerSync:    bytesPerSync,
 		syncQueue:       &walSyncQueue{},
 	}, nil
 }
