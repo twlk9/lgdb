@@ -53,11 +53,12 @@ type SSTableReader struct {
 
 // Block represents a decoded block
 type Block struct {
-	data          []byte
-	restarts      []uint32
-	numEntries    uint32
-	restartKeys   [][]byte // Cached keys at restart points for faster seeking
-	sparseOffsets []uint32 // Sparse index: offsets for every Nth entry (memory efficient)
+	data             []byte
+	restarts         []uint32
+	numEntries       uint32
+	restartKeys      [][]byte // Cached keys at restart points for faster seeking
+	restartEntryIndx []int    // tracking for entry points
+	sparseOffsets    []uint32 // Sparse index: offsets for every Nth entry (memory efficient)
 }
 
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
@@ -452,13 +453,21 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 		}
 	}
 
-	return &Block{
+	b := &Block{
 		data:          blockData,
 		restarts:      restarts,
 		numEntries:    numEntries,
 		restartKeys:   restartKeys,
 		sparseOffsets: sparseOffsets,
-	}, nil
+	}
+	ridx := make([]int, len(restarts))
+	entryidx := 0
+	for i := range len(restarts) - 1 {
+		ridx[i] = entryidx
+		entryidx += b.countEntriesBetweenRestarts(i, i+1)
+	}
+	b.restartEntryIndx = ridx
+	return b, nil
 }
 
 // parseBlockWithSparseIndex parses block data in a single pass to count entries
@@ -931,13 +940,9 @@ func (b *Block) seekToRestartPoint(target keys.EncodedKey) (int, int, error) {
 	// Convert restart point to entry index
 	// We need to count entries from the beginning to the restart point
 	entryIndex := 0
-	for i := 0; i < restartIndex; i++ {
-		if i+1 < len(b.restarts) {
-			// Count entries between restart points
-			entryIndex += b.countEntriesBetweenRestarts(i, i+1)
-		}
+	if restartIndex < len(b.restartEntryIndx) {
+		entryIndex = b.restartEntryIndx[restartIndex]
 	}
-
 	return restartIndex, entryIndex, nil
 }
 
