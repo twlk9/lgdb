@@ -64,7 +64,7 @@ type Block struct {
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
 func NewSSTableReader(path string, logger *slog.Logger) (*SSTableReader, error) {
 	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})) // Effectively disable logging
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError + 1})) // Effectively disable logging
 	}
 	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {

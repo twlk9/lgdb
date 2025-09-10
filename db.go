@@ -704,7 +704,6 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 
 	// Track what we're flushing for debugging
 	entriesWritten := 0
-	var firstKey, lastKey []byte
 	memtableSize := memtable.Size()
 	memtableMemUsage := memtable.MemoryUsage()
 
@@ -714,7 +713,7 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	}
 
 	// Log flush start with memtable stats
-	db.logger.Debug("FLUSH_CONVERSION_START",
+	db.logger.Debug("FLUSH_START",
 		"file_number", fileNumber,
 		"memtable_entries", memtableSize,
 		"memtable_memory_bytes", memtableMemUsage)
@@ -724,16 +723,8 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 		key := iter.Key()
 		value := iter.Value()
 
-		// Track key range for debugging
-		if entriesWritten == 0 {
-			firstKey = make([]byte, len(key.UserKey()))
-			copy(firstKey, key.UserKey())
-		}
-		lastKey = make([]byte, len(key.UserKey()))
-		copy(lastKey, key.UserKey())
 		entriesWritten++
 
-		// Store internal keys in SSTable to handle tombstones properly (using pooled encoding)
 		err := writer.Add(key, value)
 		if err != nil {
 			return nil, err
@@ -758,22 +749,16 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 		LargestKey:  writer.LargestKey(),
 	}
 
-	// Update version set with new SSTable at L0
 	edit := NewVersionEdit()
-	edit.AddFile(0, fileMetadata) // Add to L0
+	edit.AddFile(0, fileMetadata)
 
-	// Log the file creation with key range and conversion stats
-	if len(firstKey) > 0 && len(lastKey) > 0 {
-		db.logger.Debug("FLUSH_CONVERSION_COMPLETE",
-			"file_number", fileNumber,
-			"entries", entriesWritten,
-			"first_key", int(firstKey[0]),
-			"last_key", int(lastKey[0]),
-			"memtable_entries_in", memtableSize,
-			"sstable_entries_out", entriesWritten,
-			"sstable_size_bytes", fileMetadata.Size,
-			"conversion_ratio", float64(entriesWritten)/float64(memtableSize))
-	}
+	db.logger.Debug("FLUSH_COMPLETE",
+		"file_number", fileNumber,
+		"entries", entriesWritten,
+		"memtable_entries_in", memtableSize,
+		"sstable_entries_out", entriesWritten,
+		"sstable_size_bytes", fileMetadata.Size,
+		"conversion_ratio", float64(entriesWritten)/float64(memtableSize))
 
 	return edit, nil
 }
@@ -795,7 +780,8 @@ func (db *DB) loadCurrentVersion() *Version {
 	}
 	db.logger.Debug("LOAD_CURRENT_VERSION",
 		"version_number", version.number,
-		"l0_files", l0FileNums)
+		"l0_files", l0FileNums,
+		"epoch", version.epochNum)
 
 	return version
 }
@@ -866,6 +852,7 @@ func (db *DB) Flush() error {
 	db.updateCurrentVersion()
 	immutableCount := len(db.immutableMemtables)
 	db.flushTrigger.Signal()
+	db.memtable.RegisterWAL(db.wal.Path())
 	db.mu.Unlock()
 
 	// Wait for the flush to complete by polling immutable count
@@ -924,6 +911,8 @@ func (db *DB) GetStats() map[string]any {
 	}
 	stats["levels"] = levelStats
 	stats["level_sizes"] = levelSizeStats
+
+	stats["epoch"] = version.epochNum
 
 	// Compaction stats
 	if db.compactionManager != nil {
