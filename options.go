@@ -187,7 +187,7 @@ func DefaultOptions() *Options {
 		WALBytesPerSync:         0, // Disabled by default
 		Compression:             compression.DefaultConfig(),
 		SelectionStrategy:       MinOverlap, // Default to write-optimized strategy
-		Logger:                  slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Logger:                  DefaultLogger(),
 	}
 
 	// File sizes are now calculated dynamically based on WriteBufferSize and LevelFileSizeMultiplier
@@ -342,4 +342,16 @@ func (o *Options) TargetFileSize(level int) int64 {
 		size *= o.LevelFileSizeMultiplier
 	}
 	return int64(size)
+}
+
+// Helpful Logger functions
+func getLogger(level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+}
+func DefaultLogger() *slog.Logger {
+	return getLogger(slog.LevelWarn)
+}
+
+func DebugLogger() *slog.Logger {
+	return getLogger(slog.LevelDebug)
 }
