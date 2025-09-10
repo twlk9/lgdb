@@ -109,7 +109,7 @@ type pendingIndexEntry struct {
 // NewSSTableWriter creates a new SSTable writer
 func NewSSTableWriter(opts SSTableOpts) (*SSTableWriter, error) {
 	if opts.Logger == nil {
-		opts.Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})) // Enable info logging for debugging
+		opts.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})) // Enable info logging for debugging
 	}
 	// Create directory if needed
 	dir := filepath.Dir(opts.Path)
@@ -184,15 +184,6 @@ func (w *SSTableWriter) Add(key keys.EncodedKey, value []byte) error {
 
 	// Check if current data block is full
 	if w.dataBlock.IsFull() {
-		// Debug: Log block statistics before flushing
-		// blockSize := w.dataBlock.EstimatedSize()
-		// numEntries := w.dataBlock.NumEntries()
-		// w.logger.Info("Flushing data block",
-		// 	"block_size", blockSize,
-		// 	"num_entries", numEntries,
-		// 	"avg_entry_size", blockSize/numEntries,
-		// 	"sstable", w.path)
-
 		if err := w.flushDataBlock(); err != nil {
 			return err
 		}
@@ -283,15 +274,6 @@ func (w *SSTableWriter) Finish() error {
 
 	// Flush remaining data block
 	if !w.dataBlock.IsEmpty() {
-		// Debug: Log final block statistics
-		// blockSize := w.dataBlock.EstimatedSize()
-		// numEntries := w.dataBlock.NumEntries()
-		// w.logger.Info("Flushing final data block",
-		// 	"block_size", blockSize,
-		// 	"num_entries", numEntries,
-		// 	"avg_entry_size", blockSize/numEntries,
-		// 	"sstable", w.path)
-
 		if err := w.flushDataBlock(); err != nil {
 			return err
 		}
@@ -326,7 +308,8 @@ func (w *SSTableWriter) Finish() error {
 
 	n, err := w.writer.Write(indexWithTrailer)
 	if err != nil {
-		w.logger.Error("Failed to write compressed index block to file", "error", err, "sstable", w.path, "compressed_index_size", len(indexWithTrailer), "original_index_size", len(indexData), "offset", indexOffset)
+		w.logger.Error("Failed to write compressed index block to file", "error", err, "sstable", w.path, "compressed_index_size",
+			len(indexWithTrailer), "original_index_size", len(indexData), "offset", indexOffset)
 		return err
 	}
 	indexSize := uint64(n)
