@@ -215,9 +215,8 @@ func Open(opts *Options) (*DB, error) {
 			return nil, err
 		}
 		db.wal = wal
+		db.memtable.RegisterWAL(db.wal.Path())
 	}
-	// register wal so it will be tracked for cleanup
-	db.memtable.RegisterWAL(db.wal.Path())
 
 	// Start the background flusher goroutine
 	db.flushWg.Add(1)
