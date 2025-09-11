@@ -61,6 +61,30 @@ func (db *DB) triggerEpochCleanup() {
 	}
 }
 
+// epochIdleAdvance bumps up the epoch on a mostly quiet system just
+// to make sure garbage is eventually dealt with
+func (db *DB) epochIdleAdvance() {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+
+	c := epoch.GetCurrentEpoch()
+	for {
+		select {
+		case <-t.C:
+			e := epoch.GetCurrentEpoch()
+			if c == e {
+				c = epoch.AdvanceEpoch()
+				db.triggerEpochCleanup()
+				db.logger.Info("Idle timer advancing epoch", "old", e, "new", c)
+			} else {
+				c = e
+			}
+		case <-db.done:
+			return
+		}
+	}
+}
+
 // DB represents the main database instance.
 // Implements an LSM-tree database with memtables, SSTables, WAL, and compaction.
 // Uses mutex-based coordination for correctness.
@@ -95,6 +119,9 @@ type DB struct {
 	// Atomic counters
 	seq    atomic.Uint64 // Sequence number for versioning
 	closed atomic.Bool   // Closed flag
+
+	// Signal to background workers
+	done chan struct{}
 
 	// Flush coordination
 	flushWg      sync.WaitGroup // Wait for background flusher to finish
@@ -175,6 +202,8 @@ func Open(opts *Options) (*DB, error) {
 	db.seq.Store(0)
 	db.closed.Store(false)
 
+	db.done = make(chan struct{})
+
 	// Initialize memtable
 	db.memtable = memtable.NewMemtable(opts.WriteBufferSize)
 
@@ -223,7 +252,8 @@ func Open(opts *Options) (*DB, error) {
 	// Start the background flusher goroutine
 	db.flushWg.Add(1)
 	go db.backgroundFlusher()
-
+	// idle timer for epoch advancement
+	go db.epochIdleAdvance()
 	return db, nil
 }
 
@@ -235,6 +265,9 @@ func (db *DB) Close() error {
 	if db.closed.Swap(true) {
 		return nil // Already closed
 	}
+
+	// signal to background workers
+	close(db.done)
 
 	// Wait for background flusher to finish
 	db.flushTrigger.Signal()
@@ -276,14 +309,13 @@ func (db *DB) backgroundFlusher() {
 
 	for {
 		db.mu.Lock()
-
 		for len(db.immutableMemtables) == 0 {
 			if db.closed.Load() {
+				db.mu.Unlock()
 				return
 			}
 			db.flushTrigger.Wait()
 		}
-
 		db.mu.Unlock()
 		if err := db.waitForL0Backpressure(); err != nil {
 			db.logger.Error("waitForL0Backpressure is backgroundFlusher error", "error", err)
@@ -903,7 +935,9 @@ func (db *DB) Flush() error {
 	db.updateCurrentVersion()
 	immutableCount := len(db.immutableMemtables)
 	db.flushTrigger.Signal()
-	db.memtable.RegisterWAL(db.wal.Path())
+	if db.wal != nil {
+		db.memtable.RegisterWAL(db.wal.Path())
+	}
 	db.mu.Unlock()
 
 	// Wait for the flush to complete by polling immutable count
