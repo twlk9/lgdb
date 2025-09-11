@@ -54,6 +54,11 @@ func ExitEpoch(epoch uint64) {
 	globalManager.ExitEpoch(epoch)
 }
 
+// GetCurrentEpoch returns the current active epoch
+func GetCurrentEpoch() uint64 {
+	return globalManager.GetCurrentEpoch()
+}
+
 // ScheduleCleanup schedules a cleanup function to be executed when the current
 // epoch has no active readers.
 func ScheduleCleanup(cleanup EpochCleanupFunc) {
@@ -116,6 +121,11 @@ func (gem *GlobalEpochManager) ExitEpoch(epoch uint64) {
 
 	count := countInterface.(*atomic.Int32)
 	count.Add(-1)
+}
+
+// GetCurrentEpoch returns the current epoch
+func (gem *GlobalEpochManager) GetCurrentEpoch() uint64 {
+	return gem.currentEpoch.Load()
 }
 
 // ScheduleCleanup schedules a cleanup function for the current epoch.
@@ -222,11 +232,6 @@ func (gem *GlobalEpochManager) TryCleanup() int {
 // AdvanceEpoch manually advances the epoch counter and returns the new epoch.
 func (gem *GlobalEpochManager) AdvanceEpoch() uint64 {
 	return gem.currentEpoch.Add(1)
-}
-
-// GetCurrentEpoch returns the current epoch number without entering it.
-func (gem *GlobalEpochManager) GetCurrentEpoch() uint64 {
-	return gem.currentEpoch.Load()
 }
 
 // GetOldestActiveReadEpoch returns the oldest epoch that still has active readers.
