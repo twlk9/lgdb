@@ -28,7 +28,9 @@ func (db *DB) rotateMemtable(newMemtable *memtable.MemTable) *memtable.MemTable 
 	// Swap memtables
 	oldMemtable := db.memtable
 	db.memtable = newMemtable
-
+	if db.wal != nil {
+		db.memtable.RegisterWAL(db.wal.Path())
+	}
 	// Add old memtable to immutable list
 	db.immutableMemtables = append(db.immutableMemtables, oldMemtable)
 
@@ -55,7 +57,6 @@ func (db *DB) removeFromImmutableMemtables(targetMemtable *memtable.MemTable) bo
 func (db *DB) triggerEpochCleanup() {
 	cleaned := epoch.TryCleanup()
 	if cleaned > 0 {
-		db.logger.Debug("epoch cleanup freed resources", "cleaned", cleaned)
 		// After epoch cleanup, remove old versions from VersionSet
 		db.versions.cleanupOldVersions()
 	}
@@ -140,6 +141,7 @@ type DB struct {
 // and returns a working database. If a database exists, it is recovered.
 // If not and CreateIfMissing is set, a new database is created.
 func Open(opts *Options) (*DB, error) {
+	epoch.AdvanceEpoch() // start with at least 1
 	if opts == nil {
 		opts = DefaultOptions()
 	}
@@ -500,9 +502,6 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 			db.logger.Error("rotating WAL failed during memtable rotation in write", "error", walerr)
 		}
 		newmemt := memtable.NewMemtable(db.options.WriteBufferSize)
-		if db.wal != nil {
-			newmemt.RegisterWAL(db.wal.Path())
-		}
 		db.rotateMemtable(newmemt)
 		db.updateCurrentVersion()
 		db.flushTrigger.Signal()
@@ -732,31 +731,7 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 			ikey := keys.NewEncodedKey(record.Key, record.Seq, record.Type)
 			db.memtable.Put(ikey, record.Value)
 		}
-
 		reader.Close()
-	}
-
-	// set wal if needed
-	if !db.options.ReadOnly && !db.options.DisableWAL {
-		if reader == nil {
-			wo := wal.WALOpts{
-				Path:            db.options.Path,
-				FileNum:         db.versions.NewFileNumber(),
-				SyncInterval:    db.options.WALSyncInterval,
-				MinSyncInterval: db.options.WALMinSyncInterval,
-				BytesPerSync:    db.options.WALBytesPerSync,
-			}
-			db.wal, err = wal.NewWAL(wo)
-			if err != nil {
-				return maxSeq, err
-			}
-			db.memtable.RegisterWAL(db.wal.Path())
-		} else {
-			db.wal, err = wal.Open(reader.Path(), db.options.WALSyncInterval, db.options.WALMinSyncInterval, db.options.WALBytesPerSync)
-			if err != nil {
-				return maxSeq, err
-			}
-		}
 	}
 	return maxSeq, nil
 }
@@ -935,9 +910,6 @@ func (db *DB) Flush() error {
 	db.updateCurrentVersion()
 	immutableCount := len(db.immutableMemtables)
 	db.flushTrigger.Signal()
-	if db.wal != nil {
-		db.memtable.RegisterWAL(db.wal.Path())
-	}
 	db.mu.Unlock()
 
 	// Wait for the flush to complete by polling immutable count
