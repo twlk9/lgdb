@@ -445,5 +445,9 @@ func (r *WALReader) ReadRecord() (*WALRecord, error) {
 
 // Close closes the WAL reader
 func (r *WALReader) Close() error {
-	return r.file.Close()
+	if err := r.file.Close(); err != nil {
+		return err
+	}
+	epoch.MarkResourceForCleanup(r.path)
+	return nil
 }

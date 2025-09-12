@@ -603,6 +603,9 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 
 	// Install the recovered version
 	vs.mu.Lock()
+	if vs.current != nil {
+		vs.current.MarkForCleanup()
+	}
 	vs.current = version
 	vs.versions = append(vs.versions, version)
 

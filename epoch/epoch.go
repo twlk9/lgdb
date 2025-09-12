@@ -323,3 +323,51 @@ func GetGlobalStats() (activeEpochs int, pendingCleanups int, pendingResources i
 
 	return activeEpochs, pendingCleanups, pendingResources
 }
+
+// GetDetailedEpochInfo returns detailed information about epoch state for debugging
+func GetDetailedEpochInfo() map[string]any {
+	info := make(map[string]any)
+
+	// Current epoch
+	info["current_epoch"] = globalManager.GetCurrentEpoch()
+	info["oldest_active_epoch"] = globalManager.GetOldestActiveReadEpoch()
+
+	// Reader counts per epoch
+	readerCounts := make(map[uint64]int32)
+	globalManager.readerCounts.Range(func(key, value any) bool {
+		epoch := key.(uint64)
+		count := value.(*atomic.Int32)
+		readerCounts[epoch] = count.Load()
+		return true
+	})
+	info["reader_counts"] = readerCounts
+
+	// Cleanup functions per epoch
+	cleanupCounts := make(map[uint64]int)
+	globalManager.cleanupFuncs.Range(func(key, value any) bool {
+		epoch := key.(uint64)
+		cleanupList := value.([]EpochCleanupFunc)
+		cleanupCounts[epoch] = len(cleanupList)
+		return true
+	})
+	info["cleanup_counts"] = cleanupCounts
+
+	// Resource windows
+	resources := make(map[string]map[string]any)
+	globalManager.resourceWindows.Range(func(key, value any) bool {
+		resourceID := key.(string)
+		window := value.(*ResourceWindow)
+
+		// Safely read window fields
+		globalManager.resourceMu.RLock()
+		resources[resourceID] = map[string]any{
+			"xmin": window.Xmin,
+			"xmax": window.Xmax,
+		}
+		globalManager.resourceMu.RUnlock()
+		return true
+	})
+	info["resources"] = resources
+
+	return info
+}

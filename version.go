@@ -224,6 +224,7 @@ func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
 	defer vs.mu.Unlock()
 
 	// Create new version based on current version
+	epoch.AdvanceEpoch()
 	newVersion := vs.current.Clone()
 	newVersion.number = vs.nextVersionNum
 	vs.nextVersionNum++
