@@ -753,11 +753,14 @@ func (it *SSTableIterator) Seek(target keys.EncodedKey) {
 		return
 	}
 
-	// Search for the appropriate block using separator semantics
-	foundBlockIndex := -1
+	// Binary search for the appropriate block using separator semantics
+	numEntries := int(it.reader.indexBlock.numEntries)
+	left, right := 0, numEntries-1
+	foundBlockIndex := numEntries - 1 // Default to last block
 
-	for i := 0; i < int(it.reader.indexBlock.numEntries); i++ {
-		err := it.reader.indexBlock.getEntry(i, it.buffers)
+	for left <= right {
+		mid := left + (right-left)/2
+		err := it.reader.indexBlock.getEntry(mid, it.buffers)
 		if err != nil {
 			it.err = err
 			return
@@ -765,24 +768,17 @@ func (it *SSTableIterator) Seek(target keys.EncodedKey) {
 
 		cmp := it.buffers.key.Compare(target)
 		if cmp > 0 {
-			foundBlockIndex = i
-			break
+			foundBlockIndex = mid
+			right = mid - 1
+		} else {
+			left = mid + 1
 		}
 	}
 
-	// If no separator > key, then key is in the last block
-	if foundBlockIndex == -1 {
-		foundBlockIndex = int(it.reader.indexBlock.numEntries - 1)
-	}
-
-	// Position index iterator at the found block
-	it.indexIter.SeekToFirst()
-	for i := 0; i < foundBlockIndex; i++ {
-		if !it.indexIter.Valid() {
-			break
-		}
-		it.indexIter.Next()
-	}
+	// Position index iterator directly at the found block index
+	it.indexIter.err = nil
+	it.indexIter.index = foundBlockIndex
+	it.indexIter.loadCurrentEntry()
 
 	if it.indexIter.Valid() {
 		it.loadCurrentBlock()
