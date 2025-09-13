@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -137,13 +138,7 @@ func (sv *StateValidator) validateIteratorConsistency() {
 
 	// Check for missing keys
 	for _, expectedKey := range expectedKeys {
-		found := false
-		for _, seenKey := range seenKeys {
-			if expectedKey == seenKey {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(seenKeys, expectedKey)
 		if !found {
 			sv.t.Errorf("Iterator missing expected key %q", expectedKey)
 		}
@@ -186,7 +181,7 @@ func NewRandomDataGenerator(seed int64) *RandomDataGenerator {
 func (rdg *RandomDataGenerator) GenerateKeyValuePairs(count int, keySize, valueSize int) []KeyValuePair {
 	pairs := make([]KeyValuePair, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		// Generate deterministic keys with padding for sorting
 		key := fmt.Sprintf("key_%08d_%s", i, rdg.randomString(keySize-16))
 		value := rdg.randomString(valueSize)
@@ -204,7 +199,7 @@ func (rdg *RandomDataGenerator) GenerateKeyValuePairs(count int, keySize, valueS
 func (rdg *RandomDataGenerator) GenerateRandomOperations(existingKeys [][]byte, numOps int) []Operation {
 	ops := make([]Operation, numOps)
 
-	for i := 0; i < numOps; i++ {
+	for i := range numOps {
 		opType := rdg.rng.Intn(3) // 0=Put, 1=Get, 2=Delete
 
 		switch opType {
@@ -220,7 +215,7 @@ func (rdg *RandomDataGenerator) GenerateRandomOperations(existingKeys [][]byte, 
 				key = existingKeys[rdg.rng.Intn(len(existingKeys))]
 			} else {
 				// 30% chance to get a random (possibly non-existent) key
-				key = []byte(fmt.Sprintf("rand_key_%d", rdg.rng.Intn(1000)))
+				key = fmt.Appendf(nil, "rand_key_%d", rdg.rng.Intn(1000))
 			}
 			ops[i] = Operation{Type: OpGet, Key: key}
 
@@ -231,7 +226,7 @@ func (rdg *RandomDataGenerator) GenerateRandomOperations(existingKeys [][]byte, 
 				key = existingKeys[rdg.rng.Intn(len(existingKeys))]
 			} else {
 				// 20% chance to delete a random (possibly non-existent) key
-				key = []byte(fmt.Sprintf("rand_key_%d", rdg.rng.Intn(1000)))
+				key = fmt.Appendf(nil, "rand_key_%d", rdg.rng.Intn(1000))
 			}
 			ops[i] = Operation{Type: OpDelete, Key: key}
 		}
@@ -296,7 +291,7 @@ func NewPropertyBasedTester(t *testing.T, db *DB, seed int64) *PropertyBasedTest
 func (pbt *PropertyBasedTester) RunRandomOperationSequence(numOperations int) {
 	var existingKeys [][]byte
 
-	for i := 0; i < numOperations; i++ {
+	for i := range numOperations {
 		ops := pbt.generator.GenerateRandomOperations(existingKeys, 1)
 		op := ops[0]
 
