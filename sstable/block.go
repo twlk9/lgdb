@@ -2,8 +2,6 @@ package sstable
 
 import (
 	"encoding/binary"
-
-	"github.com/twlk9/lgdb/bufferpool"
 )
 
 // BlockBuilder builds data blocks for SSTables using Pebble format
@@ -82,12 +80,10 @@ func (b *BlockBuilder) Add(key, value []byte) {
 
 	// Update last key using buffer pool
 	if cap(b.lastKey) < len(key) {
-		if b.lastKey != nil {
-			bufferpool.PutBuffer(b.lastKey)
-		}
-		b.lastKey = bufferpool.GetBuffer(len(key))
+		b.lastKey = make([]byte, len(key))
+	} else {
+		b.lastKey = b.lastKey[:len(key)]
 	}
-	b.lastKey = b.lastKey[:len(key)]
 	copy(b.lastKey, key)
 
 	b.numEntries++
