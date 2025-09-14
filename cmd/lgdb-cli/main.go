@@ -48,6 +48,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "scan-key":
+		if err := scanKeyCommand(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("lgdb-cli version %s\n", version)
 	case "help":
@@ -70,6 +75,7 @@ Commands:
   dump <db_path> <file_number>       Dump contents of specific SSTable file
   compact <db_path>                  Force database compaction
   verify <db_path>                   Verify database integrity
+  scan-key <db_path> <key_prefix>    Find which SSTables contain keys with given prefix
   version                            Show version information
   help                               Show this help message
 
@@ -78,6 +84,7 @@ Examples:
   lgdb-cli dump /path/to/database 000001
   lgdb-cli compact /path/to/database
   lgdb-cli verify /path/to/database
+  lgdb-cli scan-key /path/to/database "fr\\x00nodeid"
 
 `)
 }
@@ -412,6 +419,145 @@ func verifyCommand(args []string) error {
 	}
 
 	fmt.Println("✓ Database integrity verified successfully!")
+	return nil
+}
+
+func scanKeyCommand(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("scan-key command requires database path and key prefix")
+	}
+
+	dbPath := args[0]
+	keyPrefix := args[1]
+
+	// Check if database directory exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return fmt.Errorf("database directory does not exist: %s", dbPath)
+	}
+
+	// Convert hex sequences in key prefix (e.g., "\\x00" -> actual null byte)
+	decodedPrefix := make([]byte, 0, len(keyPrefix))
+	for i := 0; i < len(keyPrefix); i++ {
+		if i+4 <= len(keyPrefix) && keyPrefix[i:i+2] == "\\x" {
+			// Parse hex byte
+			hexStr := keyPrefix[i+2 : i+4]
+			b := byte(0)
+			for _, c := range hexStr {
+				b *= 16
+				if c >= '0' && c <= '9' {
+					b += byte(c - '0')
+				} else if c >= 'a' && c <= 'f' {
+					b += byte(c - 'a' + 10)
+				} else if c >= 'A' && c <= 'F' {
+					b += byte(c - 'A' + 10)
+				}
+			}
+			decodedPrefix = append(decodedPrefix, b)
+			i += 3 // Skip the hex sequence
+		} else {
+			decodedPrefix = append(decodedPrefix, keyPrefix[i])
+		}
+	}
+
+	fmt.Printf("Scanning for keys with prefix: %s\n", formatKey(decodedPrefix, 50))
+	fmt.Printf("Database: %s\n\n", dbPath)
+
+	// Open database in read-only mode
+	opts := lgdb.DefaultOptions()
+	opts.Path = dbPath
+	opts.ReadOnly = false // Need write access to read latest manifest
+	db, err := lgdb.Open(opts)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Get all SSTable files from the database
+	sstFiles, err := filepath.Glob(filepath.Join(dbPath, "*.sst"))
+	if err != nil {
+		return fmt.Errorf("failed to list SST files: %v", err)
+	}
+
+	if len(sstFiles) == 0 {
+		fmt.Println("No SSTable files found")
+		return nil
+	}
+
+	foundFiles := 0
+	totalKeys := 0
+
+	// Check each SSTable file
+	for _, sstFile := range sstFiles {
+		// Extract file number
+		filename := filepath.Base(sstFile)
+		if filepath.Ext(filename) != ".sst" {
+			continue
+		}
+		fileNumStr := filename[:len(filename)-4] // Remove .sst extension
+
+		fileNum, err := strconv.ParseUint(fileNumStr, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		// Open SSTable reader
+		reader, err := sstable.NewSSTableReader(sstFile, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		if err != nil {
+			fmt.Printf("Failed to open SSTable %s: %v\n", sstFile, err)
+			continue
+		}
+
+		// Create iterator and check for matching keys
+		iter := reader.NewIterator()
+		iter.SeekToFirst()
+
+		matchingKeys := 0
+		samples := make([]string, 0, 5)
+
+		for iter.Valid() {
+			key := iter.Key()
+			userKey := key.UserKey()
+
+			// Check if this key matches our prefix
+			if len(userKey) >= len(decodedPrefix) && string(userKey[:len(decodedPrefix)]) == string(decodedPrefix) {
+				matchingKeys++
+				totalKeys++
+
+				// Collect samples (first 5 matching keys)
+				if len(samples) < 5 {
+					samples = append(samples, formatKey(userKey, 60))
+				}
+			}
+
+			iter.Next()
+		}
+
+		iter.Close()
+		reader.Close()
+
+		// Report if this file has matching keys
+		if matchingKeys > 0 {
+			foundFiles++
+			fmt.Printf("File: %06d.sst (%d matching keys)\n", fileNum, matchingKeys)
+
+			// Show sample keys
+			for i, sample := range samples {
+				fmt.Printf("  Sample %d: %s\n", i+1, sample)
+			}
+			if matchingKeys > len(samples) {
+				fmt.Printf("  ... (%d more keys)\n", matchingKeys-len(samples))
+			}
+			fmt.Println()
+		}
+	}
+
+	// Summary
+	if foundFiles == 0 {
+		fmt.Printf("No keys found with prefix: %s\n", formatKey(decodedPrefix, 50))
+	} else {
+		fmt.Printf("Summary: Found %d keys across %d SSTable files\n", totalKeys, foundFiles)
+	}
+
 	return nil
 }
 
