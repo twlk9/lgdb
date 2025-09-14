@@ -704,6 +704,7 @@ func (r *SSTableReader) NewIteratorWithBounds(bounds *keys.Range) *SSTableIterat
 		reader:    r,
 		indexIter: r.indexBlock.NewIterator(),
 		buffers:   NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
+		bounds:    bounds,
 	}
 
 	return iter
