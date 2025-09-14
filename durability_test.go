@@ -632,3 +632,113 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 		})
 	}
 }
+
+// TestSequenceRecoveryWithoutWAL tests that sequence numbers are properly restored
+// from manifest metadata when WAL is disabled. When WAL is disabled, the sequence
+// number isn't persisted in the WAL, so it must be reconstructed from the manifest.
+func TestSequenceRecoveryWithoutWAL(t *testing.T) {
+	tmpDir := t.TempDir()
+	defer os.RemoveAll(tmpDir)
+
+	// Open database with WAL disabled
+	opts := DefaultOptions()
+	opts.Path = tmpDir
+	opts.DisableWAL = true
+	opts.WriteBufferSize = 1024 // Small buffer to force flush
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+
+	// Write enough data to trigger a flush
+	numKeys := 100
+	for i := 0; i < numKeys; i++ {
+		key := []byte("key" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)))
+		value := []byte("value" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)) + strings.Repeat("x", 30))
+
+		if err := db.Put(key, value); err != nil {
+			t.Fatalf("Failed to put key %d: %v", i, err)
+		}
+	}
+
+	// Force flush to ensure data goes to SSTable
+	if err := db.Flush(); err != nil {
+		t.Fatalf("Failed to flush memtable: %v", err)
+	}
+
+	// Capture current sequence number before closing
+	originalSeq := db.seq.Load()
+
+	t.Logf("Original sequence number before close: %d", originalSeq)
+
+	if originalSeq < uint64(numKeys) {
+		t.Errorf("Expected sequence number >= %d, got %d", numKeys, originalSeq)
+	}
+
+	// Close the database
+	if err := db.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
+
+	// Reopen the database (still with WAL disabled)
+	opts.Path = tmpDir
+	opts.DisableWAL = true
+
+	reopenedDB, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
+	}
+	defer reopenedDB.Close()
+
+	// Check the sequence number after reopening
+	recoveredSeq := reopenedDB.seq.Load()
+
+	t.Logf("Recovered sequence number after reopen: %d", recoveredSeq)
+
+	// The sequence should be properly restored from manifest metadata
+	if recoveredSeq != originalSeq {
+		t.Errorf("Sequence number not properly recovered: original=%d, recovered=%d", originalSeq, recoveredSeq)
+	}
+
+	// Verify data is still accessible
+	for i := 0; i < numKeys; i++ {
+		key := []byte("key" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)))
+		expectedValue := []byte("value" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)) + strings.Repeat("x", 30))
+
+		value, err := reopenedDB.Get(key)
+		if err != nil {
+			t.Errorf("Failed to get key %d after reopen: %v", i, err)
+			continue
+		}
+		if string(value) != string(expectedValue) {
+			t.Errorf("Key %d: expected %s, got %s", i, string(expectedValue), string(value))
+		}
+	}
+
+	// Test that new writes use proper sequence numbers (should be higher than recovered)
+	newKey := []byte("new_key_after_recovery")
+	newValue := []byte("new_value_after_recovery")
+
+	if err := reopenedDB.Put(newKey, newValue); err != nil {
+		t.Fatalf("Failed to put new key after recovery: %v", err)
+	}
+
+	// Check that sequence advanced
+	finalSeq := reopenedDB.seq.Load()
+
+	if finalSeq <= recoveredSeq {
+		t.Errorf("Sequence number did not advance after new write: recovered=%d, final=%d", recoveredSeq, finalSeq)
+	}
+
+	// Verify the new key is accessible
+	retrievedNewValue, err := reopenedDB.Get(newKey)
+	if err != nil {
+		t.Errorf("Failed to get new key after recovery: %v", err)
+	} else if string(retrievedNewValue) != string(newValue) {
+		t.Errorf("New key value mismatch: expected %s, got %s", string(newValue), string(retrievedNewValue))
+	}
+
+	t.Logf("Final sequence number after new write: %d", finalSeq)
+	t.Logf("Sequence recovery test completed successfully")
+}

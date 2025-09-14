@@ -219,7 +219,7 @@ func Open(opts *Options) (*DB, error) {
 		logger.Warn("failed to cleanup orphaned SST files", "error", err)
 	}
 
-	// Recover from WAL if exists (skip in read-only mode)
+	// Recover sequence number from WAL and SSTables
 	var maxSeq uint64
 	if !opts.ReadOnly {
 		var err error
@@ -229,10 +229,22 @@ func Open(opts *Options) (*DB, error) {
 			return nil, err
 		}
 	}
+
 	db.seq.Store(maxSeq)
 
 	// Initialize read state
 	db.updateCurrentVersion()
+
+	// Also scan SSTables to find maximum sequence number
+	// This is needed when data was bulk-loaded and flushed to SSTables
+	sstableMaxSeq, err := db.findMaxSequenceInSSTables()
+	if err != nil {
+		return nil, err
+	}
+
+	if sstableMaxSeq > maxSeq {
+		db.seq.Store(sstableMaxSeq)
+	}
 
 	// Initialize WAL (skip in read-only mode or if disabled)
 	if !opts.ReadOnly && !opts.DisableWAL {
@@ -321,6 +333,9 @@ func (db *DB) backgroundFlusher() {
 		db.mu.Unlock()
 		if err := db.waitForL0Backpressure(); err != nil {
 			db.logger.Error("waitForL0Backpressure is backgroundFlusher error", "error", err)
+			time.Sleep(5 * time.Second)
+			// don't flush this cycle and try again - writes will block until it clears
+			continue
 		}
 
 		db.mu.Lock()
@@ -733,6 +748,31 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 		}
 		reader.Close()
 	}
+	return maxSeq, nil
+}
+
+// findMaxSequenceInSSTables scans SSTable metadata to find the maximum sequence number.
+// Uses LargestKey metadata instead of scanning actual data for efficiency.
+func (db *DB) findMaxSequenceInSSTables() (uint64, error) {
+	var maxSeq uint64
+
+	// Get current version to access all SSTable files
+	version := db.loadCurrentVersion()
+	if version == nil {
+		return 0, nil // No SSTables yet
+	}
+
+	// Scan all levels
+	for level := 0; level < len(version.files); level++ {
+		files := version.GetFiles(level)
+		for _, file := range files {
+			// Extract sequence number from LargestKey
+			if file.LargestKey != nil && file.LargestKey.Seq() > maxSeq {
+				maxSeq = file.LargestKey.Seq()
+			}
+		}
+	}
+
 	return maxSeq, nil
 }
 
