@@ -240,7 +240,7 @@ func (cm *CompactionManager) pickLevelCompaction(version *Version) *Compaction {
 	bestLevel := -1
 	bestScore := 0.0
 
-	for level := 1; level < len(version.files)-1; level++ { // Skip L0 and last level
+	for level := 1; level < cm.options.MaxLevels-1; level++ { // Skip L0 and bottom level
 		score := cm.calculateLevelScore(level, version)
 		if score >= 1.0 && score > bestScore {
 			bestScore = score
