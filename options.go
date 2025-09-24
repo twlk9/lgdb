@@ -43,7 +43,7 @@ var (
 	DefaultBlockSize                     = 4 * KiB
 	DefaultBlockRestartInterval          = 16
 	DefaultBlockMinEntries               = 4
-	DefaultMaxManifestFileSize     int64 = 64 * MiB
+	DefaultMaxManifestFileSize     int64 = 256 * MiB
 	DefaultWALSyncInterval               = 500 * time.Millisecond
 	DefaultWALMinSyncInterval            = 500 * time.Microsecond
 
