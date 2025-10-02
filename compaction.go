@@ -477,16 +477,23 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 			copy(lastUserKey, k.UserKey())
 			skipCurrentUserKey = false
 
-			// If the most recent version is a delete, skip this entire user key
-			// This is how tombstones "consume" older versions during compaction
+			// If the most recent version is a delete, check if we can drop the tombstone
 			if k.Kind() == keys.KindDelete {
-				// Drop tombstones at bottom level since no older versions can exist below
-				if compaction.outputLevel >= cm.options.MaxLevels-1 {
+				// Can drop tombstone if:
+				// 1. We're at the bottom level (no lower levels exist), OR
+				// 2. The key doesn't exist in any level beyond the output level
+				canDropTombstone := compaction.outputLevel >= cm.options.MaxLevels-1 ||
+					compaction.KeyNotExistsBeyondOutputLevel(k.UserKey())
+
+				if canDropTombstone {
+					// Tombstone can be safely dropped - skip this entire user key
 					skipCurrentUserKey = true
 					continue
 				}
+
+				// Tombstone must be preserved because key might exist in lower levels
 				skipCurrentUserKey = true
-				// Don't continue here - write the tombstone to output since it's not bottom level
+				// Don't continue here - write the tombstone to output
 			}
 		} else {
 			// Same user key - skip if we're already skipping this key or if it's an older version
@@ -715,6 +722,39 @@ type Compaction struct {
 	outputFiles       []*FileMetadata
 	stats             *CompactionStats
 	maxOutputFileSize int64
+}
+
+// KeyNotExistsBeyondOutputLevel returns true if the given user key definitely
+// does not exist in any level beyond the output level. This allows for early
+// tombstone dropping during compaction - if a tombstone's key doesn't exist
+// in lower levels, the tombstone can be safely dropped.
+//
+// Returns true if the key is guaranteed not to exist beyond output level.
+// Returns false if the key might exist (conservative approach).
+func (c *Compaction) KeyNotExistsBeyondOutputLevel(userKey []byte) bool {
+	// If compacting to the bottom level, no levels exist beyond it
+	if c.outputLevel >= len(c.version.files)-1 {
+		return true
+	}
+
+	// Check all levels below the output level
+	for level := c.outputLevel + 1; level < len(c.version.files); level++ {
+		files := c.version.GetFiles(level)
+
+		// Check if userKey falls within any file's key range at this level
+		for _, file := range files {
+			// Files in L1+ have non-overlapping ranges within a level
+			// Check if userKey is within [SmallestKey, LargestKey]
+			if file.SmallestKey.UserKey().Compare(userKey) <= 0 &&
+				file.LargestKey.UserKey().Compare(userKey) >= 0 {
+				// Key falls within this file's range, so it might exist
+				return false
+			}
+		}
+	}
+
+	// Key doesn't fall within any file range in levels beyond output
+	return true
 }
 
 // Cleanup cleans up resources used by the compaction.

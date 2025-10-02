@@ -1217,3 +1217,266 @@ func TestLevelSizeLimitsAndCompactionStrategy(t *testing.T) {
 		}
 	}
 }
+
+// TestTombstoneEarlyDrop tests that tombstones can be dropped during intermediate level compactions
+// when the deleted key doesn't exist in lower levels (not just at the bottom level)
+func TestTombstoneEarlyDrop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	opts := DefaultOptions()
+	opts.Path = tmpDir
+	opts.WriteBufferSize = 512
+	opts.L0CompactionTrigger = 2
+	opts.MaxLevels = 4 // L0, L1, L2, L3
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Scenario: Create a situation where:
+	// - L1 has: DELETE(key001) and PUT(key500)
+	// - L2 has: PUT(key800), PUT(key900) (no key001)
+	// - L3 is empty
+	//
+	// When compacting L1->L2, the DELETE(key001) tombstone should be dropped
+	// because key001 doesn't exist anywhere in L2 or L3
+
+	// Step 1: Create L2 data first (keys that DON'T include key001)
+	for i := 800; i < 820; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		value := fmt.Sprintf("value%03d", i)
+		if err := db.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// More L2 data
+	for i := 900; i < 920; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		value := fmt.Sprintf("value%03d", i)
+		if err := db.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for L0->L1 compaction
+	db.WaitForCompaction()
+	time.Sleep(200 * time.Millisecond)
+
+	// Now create data in L1 that will compact to L2
+	// First, create the key we'll delete
+	if err := db.Put([]byte("key001"), []byte("original")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete the key (creates tombstone)
+	if err := db.Delete([]byte("key001")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add more data to trigger compaction
+	for i := 500; i < 520; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		value := fmt.Sprintf("value%03d", i)
+		if err := db.Put([]byte(key), []byte(value)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for compactions to settle
+	db.WaitForCompaction()
+	time.Sleep(300 * time.Millisecond)
+
+	// Force manual compaction to ensure L1->L2 happens
+	if err := db.CompactRange(); err != nil {
+		t.Fatal(err)
+	}
+	db.WaitForCompaction()
+
+	// Now check L2 for tombstones - the DELETE(key001) should have been dropped
+	// during L1->L2 compaction because key001 doesn't exist in L2 or below
+	version := db.versions.GetCurrentVersion()
+	defer version.MarkForCleanup()
+
+	l2Files := version.GetFiles(2)
+	tombstoneCount := 0
+	tombstoneKeys := []string{}
+
+	for _, file := range l2Files {
+		cachedReader, err := db.openSSTable(file.FileNum)
+		if err != nil {
+			t.Logf("Could not open L2 file %d: %v", file.FileNum, err)
+			continue
+		}
+
+		reader := cachedReader.Reader()
+		iter := reader.NewIterator()
+
+		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
+			key := iter.Key()
+			if key != nil && key.Kind() == 2 { // KindDelete
+				tombstoneCount++
+				userKey := string(key.UserKey())
+				tombstoneKeys = append(tombstoneKeys, userKey)
+				t.Logf("Found tombstone in L2: %s", userKey)
+			}
+		}
+		iter.Close()
+	}
+
+	// With the optimization, tombstones should be dropped
+	if tombstoneCount > 0 {
+		t.Errorf("Found %d tombstones in L2 that should have been dropped: %v",
+			tombstoneCount, tombstoneKeys)
+		t.Logf("These tombstones should have been dropped during L1->L2 compaction")
+		t.Logf("because the deleted keys don't exist in L2 or lower levels")
+	} else {
+		t.Logf("SUCCESS: No tombstones found in L2 - early dropping is working correctly")
+	}
+}
+
+// TestKeyNotExistsBeyondOutputLevel tests the logic for determining if a key
+// exists in levels below the compaction output level
+func TestKeyNotExistsBeyondOutputLevel(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	opts := DefaultOptions()
+	opts.Path = tmpDir
+	opts.WriteBufferSize = 512
+	opts.L0CompactionTrigger = 4
+	opts.MaxLevels = 4
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a known distribution across levels
+	// L1: key100-key199
+	for i := 100; i < 200; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		if err := db.Put([]byte(key), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Flush()
+
+	// L1: key300-key399
+	for i := 300; i < 400; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		if err := db.Put([]byte(key), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Flush()
+
+	// Wait for data to settle into levels
+	db.WaitForCompaction()
+	time.Sleep(200 * time.Millisecond)
+
+	// Add more data to create L2
+	for i := 500; i < 600; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		if err := db.Put([]byte(key), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Flush()
+
+	for i := 700; i < 800; i++ {
+		key := fmt.Sprintf("key%03d", i)
+		if err := db.Put([]byte(key), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Flush()
+
+	db.WaitForCompaction()
+	time.Sleep(300 * time.Millisecond)
+
+	// Get current version and check actual file distribution
+	version := db.versions.GetCurrentVersion()
+	defer version.MarkForCleanup()
+
+	// Log what's actually in each level for debugging
+	for level := 0; level < 4; level++ {
+		files := version.GetFiles(level)
+		if len(files) > 0 {
+			t.Logf("Level %d has %d files:", level, len(files))
+			for _, file := range files {
+				t.Logf("  File %d: %s to %s", file.FileNum,
+					string(file.SmallestKey.UserKey()),
+					string(file.LargestKey.UserKey()))
+			}
+		}
+	}
+
+	// Test cases for KeyNotExistsBeyondOutputLevel
+	// These test the logic regardless of actual data distribution
+	testCases := []struct {
+		name         string
+		userKey      string
+		outputLevel  int
+		shouldExist  bool
+		description  string
+	}{
+		{
+			name:        "key not in any range",
+			userKey:     "key050",
+			outputLevel: 1,
+			shouldExist: false,
+			description: "key050 doesn't exist anywhere, so doesn't exist beyond L1",
+		},
+		{
+			name:        "key at bottom level",
+			userKey:     "key999",
+			outputLevel: 3, // MaxLevels-1
+			shouldExist: false,
+			description: "any key at bottom level doesn't exist beyond",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a simple compaction context
+			compaction := &Compaction{
+				level:       tc.outputLevel - 1,
+				outputLevel: tc.outputLevel,
+				version:     version,
+			}
+
+			// Call the function
+			keyNotExists := compaction.KeyNotExistsBeyondOutputLevel([]byte(tc.userKey))
+
+			t.Logf("Test case: %s", tc.description)
+			t.Logf("  User key: %s, Output level: %d", tc.userKey, tc.outputLevel)
+			t.Logf("  Expected: key NOT exists beyond = %v, Got: %v", !tc.shouldExist, keyNotExists)
+
+			// Verify the result
+			if keyNotExists != !tc.shouldExist {
+				t.Errorf("KeyNotExistsBeyondOutputLevel(%s) = %v, want %v",
+					tc.userKey, keyNotExists, !tc.shouldExist)
+			}
+		})
+	}
+
+	t.Log("KeyNotExistsBeyondOutputLevel tests completed")
+}
