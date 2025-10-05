@@ -134,6 +134,9 @@ type DB struct {
 
 	// File cache for SSTableReader instances
 	fileCache *FileCache
+
+	// Block cache for SSTable data blocks
+	blockCache *sstable.BlockCache
 }
 
 // Open opens a database with the given options.
@@ -185,11 +188,13 @@ func Open(opts *Options) (*DB, error) {
 	}
 
 	db := &DB{
-		options:   opts,
-		path:      opts.Path,
-		logger:    logger,
-		fileCache: NewFileCache(opts.GetFileCacheSize(), logger),
+		options:    opts,
+		path:       opts.Path,
+		logger:     logger,
+		blockCache: sstable.NewBlockCache(opts.BlockCacheSize),
 	}
+
+	db.fileCache = NewFileCache(opts.GetFileCacheSize(), db.blockCache, logger)
 
 	db.flushTrigger = sync.NewCond(&db.mu)
 	db.flushBP = sync.NewCond(&db.mu)
@@ -304,6 +309,11 @@ func (db *DB) Close() error {
 		if err := db.fileCache.Close(); err != nil {
 			return err
 		}
+	}
+
+	// Close block cache
+	if db.blockCache != nil {
+		db.blockCache.Close()
 	}
 
 	// Close version set

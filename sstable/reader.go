@@ -42,6 +42,8 @@ type SSTableReader struct {
 	indexBlock *Block
 	logger     *slog.Logger
 	path       string // For better error context
+	fileNum    uint64
+	blockCache *BlockCache
 
 	// Cached metadata
 	smallestKey keys.EncodedKey
@@ -62,11 +64,11 @@ type Block struct {
 }
 
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
-func NewSSTableReader(path string, logger *slog.Logger) (*SSTableReader, error) {
+func NewSSTableReader(p string, fileNum uint64, blockCache *BlockCache, logger *slog.Logger) (*SSTableReader, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError + 1})) // Effectively disable logging
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY, 0644)
+	file, err := os.OpenFile(p, os.O_RDONLY, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -79,11 +81,13 @@ func NewSSTableReader(path string, logger *slog.Logger) (*SSTableReader, error) 
 	}
 
 	reader := &SSTableReader{
-		file:    file,
-		size:    stat.Size(),
-		logger:  logger,
-		path:    path,
-		buffers: NewEntryBuffers(512, 512), // For initialization operations
+		file:       file,
+		size:       stat.Size(),
+		logger:     logger,
+		path:       p,
+		fileNum:    fileNum,
+		blockCache: blockCache,
+		buffers:    NewEntryBuffers(512, 512), // For initialization operations
 	}
 
 	// Read and parse footer
@@ -346,6 +350,17 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 
 // readDataBlock reads a data block from disk
 func (r *SSTableReader) readDataBlock(handle BlockHandle) (*Block, error) {
+	cacheKey := GenerateCacheKey(r.fileNum, handle.Offset)
+
+	// 1. Check cache first
+	if r.blockCache != nil {
+		if cachedBlock, found := r.blockCache.Get(cacheKey); found {
+			// Cache hit - parse and return
+			return r.parseBlock(cachedBlock)
+		}
+	}
+
+	// 2. Cache miss - read from file
 	data := bufferpool.GetBuffer(int(handle.Size))
 	defer bufferpool.PutBuffer(data)
 
@@ -354,11 +369,6 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle) (*Block, error) {
 		r.logger.Error("Failed to read data block", "error", err, "sstable", r.path, "offset", handle.Offset, "size", handle.Size)
 		return nil, err
 	}
-
-	// Keep defensive copying - it doesn't add much overhead and eliminates data races
-	// defensiveCopy := make([]byte, len(data))
-	// copy(defensiveCopy, data)
-	// data = defensiveCopy
 
 	// Check if we have enough data for the block trailer
 	if len(data) < BlockTrailerSize {
@@ -375,6 +385,13 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle) (*Block, error) {
 	decompressedData, err := compression.DecompressBlock(nil, blockData, compressionType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decompress block: %w", err)
+	}
+
+	// 3. Put decompressed data into cache
+	if r.blockCache != nil {
+		// We cache the decompressed data, as decompression can be expensive.
+		// A defensive copy is made by the cache itself if needed.
+		r.blockCache.Put(cacheKey, decompressedData)
 	}
 
 	return r.parseBlock(decompressedData)

@@ -221,7 +221,7 @@ func inspectL1File(dbPath string, targetKey byte) {
 
 	// Check each file for the target key
 	for _, filePath := range files {
-		reader, err := sstable.NewSSTableReader(filePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+		reader, err := sstable.NewSSTableReader(filePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 		if err != nil {
 			fmt.Printf("Error opening %s: %v\n", filePath, err)
 			continue
@@ -592,7 +592,9 @@ func TestFileCache(t *testing.T) {
 	}
 
 	// Now test the file cache with epoch protection
-	cache := NewFileCache(2, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))) // Small cache size for testing
+	blockCache := sstable.NewBlockCache(1 * MiB)
+	defer blockCache.Close()
+	cache := NewFileCache(2, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))) // Small cache size for testing
 	defer cache.Close()
 
 	// Epoch protection for all file access
@@ -715,7 +717,9 @@ func TestFileCacheEviction(t *testing.T) {
 	}
 
 	// Create cache with capacity of 2
-	cache := NewFileCache(2, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	blockCache := sstable.NewBlockCache(1 * MiB)
+	defer blockCache.Close()
+	cache := NewFileCache(2, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	defer cache.Close()
 
 	// Epoch protection for all file access
@@ -789,7 +793,9 @@ func TestFileCacheEpochBased(t *testing.T) {
 	}
 
 	// Create cache with capacity of 1
-	cache := NewFileCache(1, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	blockCache := sstable.NewBlockCache(1 * MiB)
+	defer blockCache.Close()
+	cache := NewFileCache(1, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	defer cache.Close()
 
 	// Epoch protection for all file access
