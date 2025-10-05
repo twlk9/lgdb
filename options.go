@@ -41,6 +41,7 @@ var (
 	DefaultL0StopWritesTrigger           = 12
 	DefaultMaxOpenFiles                  = 1000 // Soft limit on file descriptors (used to calculate file cache size)
 	DefaultBlockSize                     = 4 * KiB
+	DefaultBlockCacheSize          int64 = 8 * MiB
 	DefaultBlockRestartInterval          = 16
 	DefaultBlockMinEntries               = 4
 	DefaultMaxManifestFileSize     int64 = 256 * MiB
@@ -102,6 +103,10 @@ type Options struct {
 	// Block size for SSTable blocks
 	// LevelDB default: 4KB
 	BlockSize int
+
+	// BlockCacheSize is the total capacity of the block cache in bytes.
+	// LevelDB default: 8MB
+	BlockCacheSize int64
 
 	// Number of keys between restart points in blocks
 	// LevelDB default: 16
@@ -174,6 +179,7 @@ func DefaultOptions() *Options {
 		L0StopWritesTrigger:     DefaultL0StopWritesTrigger,
 		MaxOpenFiles:            DefaultMaxOpenFiles,
 		BlockSize:               DefaultBlockSize,
+		BlockCacheSize:          DefaultBlockCacheSize,
 		BlockRestartInterval:    DefaultBlockRestartInterval,
 		BlockMinEntries:         DefaultBlockMinEntries,
 		MaxManifestFileSize:     DefaultMaxManifestFileSize,

@@ -54,7 +54,7 @@ func TestSSTableBasicWriteRead(t *testing.T) {
 	}
 
 	// Read SSTable
-	reader, err := NewSSTableReader(sstablePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	if err != nil {
 		t.Fatalf("Failed to create SSTable reader: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestSSTableKeyRange(t *testing.T) {
 	}
 
 	// Read and verify key range
-	reader, err := NewSSTableReader(sstablePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	if err != nil {
 		t.Fatalf("Failed to create SSTable reader: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestSSTableMultipleBlocks(t *testing.T) {
 	}
 
 	// Read and verify all keys
-	reader, err := NewSSTableReader(sstablePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	if err != nil {
 		t.Fatalf("Failed to create SSTable reader: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestSSTableEmptyFile(t *testing.T) {
 	}
 
 	// Try to read empty SSTable
-	reader, err := NewSSTableReader(sstablePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	if err != nil {
 		t.Fatalf("Failed to create SSTable reader: %v", err)
 	}

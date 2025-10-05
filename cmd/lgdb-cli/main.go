@@ -181,7 +181,7 @@ func dumpCommand(args []string) error {
 	}
 
 	// Open SSTable reader
-	reader, err := sstable.NewSSTableReader(sstablePath, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	reader, err := sstable.NewSSTableReader(sstablePath, fileNum, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	if err != nil {
 		return fmt.Errorf("failed to open SSTable: %v", err)
 	}
@@ -501,7 +501,7 @@ func scanKeyCommand(args []string) error {
 		}
 
 		// Open SSTable reader
-		reader, err := sstable.NewSSTableReader(sstFile, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+		reader, err := sstable.NewSSTableReader(sstFile, fileNum, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 		if err != nil {
 			fmt.Printf("Failed to open SSTable %s: %v\n", sstFile, err)
 			continue

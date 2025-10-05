@@ -15,10 +15,11 @@ import (
 // FileCache provides a sharded LRU cache for SSTableReader instances
 // to avoid repeatedly opening/closing files during reads.
 type FileCache struct {
-	shards []*fileCacheShard
-	mu     sync.RWMutex
-	closed bool
-	logger *slog.Logger
+	shards     []*fileCacheShard
+	mu         sync.RWMutex
+	closed     bool
+	logger     *slog.Logger
+	blockCache *sstable.BlockCache
 }
 
 // fileCacheShard is a single shard of the file cache with its own LRU list and mutex
@@ -38,7 +39,7 @@ type fileCacheEntry struct {
 
 // NewFileCache creates a new file cache with the specified capacity.
 // Uses 4 shards per CPU core for reduced contention, similar to Pebble's approach.
-func NewFileCache(capacity int, logger *slog.Logger) *FileCache {
+func NewFileCache(capacity int, blockCache *sstable.BlockCache, logger *slog.Logger) *FileCache {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})) // Effectively disable logging
 	}
@@ -52,7 +53,8 @@ func NewFileCache(capacity int, logger *slog.Logger) *FileCache {
 					lru:      list.New(),
 				},
 			},
-			logger: logger,
+			logger:     logger,
+			blockCache: blockCache,
 		}
 	}
 
@@ -62,8 +64,9 @@ func NewFileCache(capacity int, logger *slog.Logger) *FileCache {
 	shardCapacity := max(1, capacity/numShards)
 
 	fc := &FileCache{
-		shards: make([]*fileCacheShard, numShards),
-		logger: logger,
+		shards:     make([]*fileCacheShard, numShards),
+		logger:     logger,
+		blockCache: blockCache,
 	}
 
 	for i := range fc.shards {
@@ -112,7 +115,7 @@ func (fc *FileCache) Get(fileNum uint64, path string) (*CachedReader, error) {
 
 	// If capacity is 0, don't cache - just create a new reader each time
 	if shard.capacity == 0 {
-		reader, err := sstable.NewSSTableReader(path, fc.logger)
+		reader, err := sstable.NewSSTableReader(path, fileNum, fc.blockCache, fc.logger)
 		if err != nil {
 			fc.logger.Error("CRITICAL: Failed to open SSTable file (uncached)", "error", err,
 				"file_num", fileNum,
@@ -141,7 +144,7 @@ func (fc *FileCache) Get(fileNum uint64, path string) (*CachedReader, error) {
 	}
 
 	// Entry not in cache, create new SSTableReader
-	reader, err := sstable.NewSSTableReader(path, fc.logger)
+	reader, err := sstable.NewSSTableReader(path, fileNum, fc.blockCache, fc.logger)
 	if err != nil {
 		fc.logger.Error("CRITICAL: Failed to open SSTable file (cached)", "error", err,
 			"file_num", fileNum,

@@ -50,7 +50,7 @@ func BenchmarkSSTableSeek(b *testing.B) {
 	writer.Close()
 
 	// Open the SSTable for reading
-	reader, err := NewSSTableReader(tempFile.Name(), logger)
+	reader, err := NewSSTableReader(tempFile.Name(), 0, nil, logger)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func BenchmarkBlockIteratorSeek(b *testing.B) {
 	writer.Close()
 
 	// Open the SSTable for reading
-	reader, err := NewSSTableReader(tempFile.Name(), logger)
+	reader, err := NewSSTableReader(tempFile.Name(), 0, nil, logger)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func BenchmarkIndexBlockSearch(b *testing.B) {
 	writer.Close()
 
 	// Open the SSTable for reading
-	reader, err := NewSSTableReader(tempFile.Name(), logger)
+	reader, err := NewSSTableReader(tempFile.Name(), 0, nil, logger)
 	if err != nil {
 		b.Fatal(err)
 	}
