@@ -341,12 +341,6 @@ func (db *DB) backgroundFlusher() {
 			db.flushTrigger.Wait()
 		}
 		db.mu.Unlock()
-		if err := db.waitForL0Backpressure(); err != nil {
-			db.logger.Error("waitForL0Backpressure is backgroundFlusher error", "error", err)
-			time.Sleep(5 * time.Second)
-			// don't flush this cycle and try again - writes will block until it clears
-			continue
-		}
 
 		db.mu.Lock()
 		mt := db.immutableMemtables[0]
@@ -402,64 +396,38 @@ func (db *DB) backgroundFlusher() {
 	}
 }
 
-// waitForL0Backpressure implements simple polling-based backpressure
-// when L0 has too many files, similar to goleveldb's approach
+// waitForL0Backpressure waits if L0 has too many files.
+// It uses a condition variable to avoid busy-waiting.
 func (db *DB) waitForL0Backpressure() error {
-	loggedBackpressure := false
-	loopCount := 0
-	startTime := time.Now()
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
+	loggedBackpressure := false
 	for {
-		// Quick check - exit fast if no backpressure needed
 		version := db.versions.GetCurrentVersion()
 		l0Files := version.GetFiles(0)
 		l0Count := len(l0Files)
 		version.MarkForCleanup()
 
 		if l0Count < db.options.L0StopWritesTrigger {
-			// L0 is not overloaded, proceed with write
 			if loggedBackpressure {
-				// Log when backpressure ends
-				db.logger.Info("L0_BACKPRESSURE_RESOLVED",
-					"l0_files", l0Count,
-					"wait_loops", loopCount)
+				db.logger.Info("L0_BACKPRESSURE_RESOLVED", "l0_files", l0Count)
 			}
 			return nil
 		}
 
-		// Check if database is being closed
 		if db.closed.Load() {
 			return ErrDBClosed
 		}
 
-		// Timeout protection - prevent infinite hangs
-		if time.Since(startTime) > 30*time.Second {
-			db.logger.Error("L0_BACKPRESSURE_TIMEOUT",
-				"l0_files", l0Count,
-				"trigger", db.options.L0StopWritesTrigger,
-				"wait_time", time.Since(startTime),
-				"wait_loops", loopCount)
-			return ErrCompactionTimeout
-		}
-
-		// Aggressively trigger compaction every 100 loops (~100ms)
-		if loopCount%100 == 0 {
-			db.compactionManager.ScheduleCompaction()
-		}
-
-		// Log first time and every 1000 loops (roughly every second)
-		if !loggedBackpressure || loopCount%1000 == 0 {
-			db.logger.Info("L0_BACKPRESSURE_WAITING",
-				"l0_files", l0Count,
-				"trigger", db.options.L0StopWritesTrigger,
-				"wait_loops", loopCount)
+		if !loggedBackpressure {
+			db.logger.Info("L0_BACKPRESSURE_WAITING", "l0_files", l0Count, "trigger", db.options.L0StopWritesTrigger)
 			loggedBackpressure = true
 		}
 
-		loopCount++
-
-		// Sleep briefly like goleveldb does, then check again
-		time.Sleep(1 * time.Millisecond)
+		// Aggressively trigger compaction.
+		db.compactionManager.ScheduleCompaction()
+		db.flushBP.Wait()
 	}
 }
 
@@ -515,6 +483,11 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 	}
 	if db.options.ReadOnly {
 		return ErrReadOnly
+	}
+
+	// Wait for L0 backpressure to subside
+	if err := db.waitForL0Backpressure(); err != nil {
+		return err
 	}
 
 	// Check if flush needed and trigger if so
