@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -373,19 +374,13 @@ func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, lev
 		return nil
 	}
 
-	// Start with the oldest files (lowest file numbers)
 	// Sort files by file number to get oldest first
 	sorted := make([]*FileMetadata, len(files))
 	copy(sorted, files)
 
-	// Simple bubble sort by file number (oldest first)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := 0; j < len(sorted)-i-1; j++ {
-			if sorted[j].FileNum > sorted[j+1].FileNum {
-				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].FileNum < sorted[j].FileNum
+	})
 
 	// Calculate target input size based on the output level's target file size
 	// We want enough input data to create properly sized output files
