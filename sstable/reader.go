@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/twlk9/lgdb/bufferpool"
@@ -60,7 +61,6 @@ type Block struct {
 	numEntries       uint32
 	restartKeys      [][]byte // Cached keys at restart points for faster seeking
 	restartEntryIndx []int    // tracking for entry points
-	sparseOffsets    []uint32 // Sparse index: offsets for every Nth entry (memory efficient)
 }
 
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
@@ -428,8 +428,8 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 		copy(blockData, data[:dataSize])
 	}
 
-	// Parse block metadata: count entries and build sparse index in single pass
-	numEntries, sparseOffsets := r.parseBlockWithSparseIndex(blockData)
+	// Parse block metadata: count entries and build restartEntryIndx in a single pass
+	numEntries, restartEntryIndx := r.parseBlockAndBuildIndex(blockData, restarts)
 
 	// Cache keys at restart points for faster seeking
 	restartKeys := make([][]byte, len(restarts))
@@ -471,36 +471,32 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 	}
 
 	b := &Block{
-		data:          blockData,
-		restarts:      restarts,
-		numEntries:    numEntries,
-		restartKeys:   restartKeys,
-		sparseOffsets: sparseOffsets,
+		data:             blockData,
+		restarts:         restarts,
+		numEntries:       numEntries,
+		restartKeys:      restartKeys,
+		restartEntryIndx: restartEntryIndx,
 	}
-	ridx := make([]int, len(restarts))
-	entryidx := 0
-	for i := range len(restarts) - 1 {
-		ridx[i] = entryidx
-		entryidx += b.countEntriesBetweenRestarts(i, i+1)
-	}
-	b.restartEntryIndx = ridx
 	return b, nil
 }
 
-// parseBlockWithSparseIndex parses block data in a single pass to count entries
-// and build sparse index for large blocks (memory-efficient optimization)
-// CRITICAL FIX: Sparse index should only use restart points, not arbitrary intervals
-func (r *SSTableReader) parseBlockWithSparseIndex(data []byte) (uint32, []uint32) {
+// parseBlockAndBuildIndex parses block data to count entries and build restartEntryIndx.
+func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) (uint32, []int) {
 	if len(data) == 0 {
 		return 0, nil
 	}
 
-	// Simply count entries - we'll use restart points for sparse access
-	// This avoids the complex key reconstruction issue
 	var numEntries uint32
 	offset := 0
+	restartEntryIndx := make([]int, len(restarts))
+	currentRestart := 0
 
 	for offset < len(data) {
+		if currentRestart < len(restarts) && uint32(offset) >= restarts[currentRestart] {
+			restartEntryIndx[currentRestart] = int(numEntries)
+			currentRestart++
+		}
+
 		// Parse entry header to skip over it
 		_, n := binary.Uvarint(data[offset:])
 		if n <= 0 {
@@ -530,9 +526,7 @@ func (r *SSTableReader) parseBlockWithSparseIndex(data []byte) (uint32, []uint32
 		numEntries++
 	}
 
-	// Don't return sparse offsets - use restart points instead
-	// This eliminates the key reconstruction complexity
-	return numEntries, nil
+	return numEntries, restartEntryIndx
 }
 
 // EntryBuffers provides reusable buffers for key-value reconstruction
@@ -577,15 +571,16 @@ func (b *Block) getEntry(index int, buffers *EntryBuffers) error {
 		return fmt.Errorf("index out of range")
 	}
 
-	// Use restart point logic
-	restartIndex := index / RestartInterval
-	if restartIndex >= len(b.restarts) {
-		restartIndex = len(b.restarts) - 1
-	}
+	// Use sort.Search to find the correct restart point.
+	restartIndex := sort.Search(len(b.restarts), func(i int) bool {
+		return b.restartEntryIndx[i] > index
+	}) - 1
+
+	restartIndex = max(0, restartIndex)
 
 	// Start from the restart point
 	offset := int(b.restarts[restartIndex])
-	startEntryIndex := restartIndex * RestartInterval
+	startEntryIndex := b.restartEntryIndx[restartIndex]
 	targetEntryInInterval := index - startEntryIndex
 
 	// Initialize lastKey from cached restart keys if available
@@ -958,51 +953,6 @@ func (b *Block) seekToRestartPoint(target keys.EncodedKey) (int, int, error) {
 		entryIndex = b.restartEntryIndx[restartIndex]
 	}
 	return restartIndex, entryIndex, nil
-}
-
-// countEntriesBetweenRestarts counts entries between two restart points
-func (b *Block) countEntriesBetweenRestarts(start, end int) int {
-	if start >= len(b.restarts) || end >= len(b.restarts) {
-		return 0
-	}
-
-	startOffset := int(b.restarts[start])
-	endOffset := int(b.restarts[end])
-
-	count := 0
-	offset := startOffset
-
-	for offset < endOffset && offset < len(b.data) {
-		// Parse entry to skip over it
-		_, n := binary.Uvarint(b.data[offset:])
-		if n <= 0 {
-			break
-		}
-		offset += n
-
-		unshared, n := binary.Uvarint(b.data[offset:])
-		if n <= 0 {
-			break
-		}
-		offset += n
-
-		valueLen, n := binary.Uvarint(b.data[offset:])
-		if n <= 0 {
-			break
-		}
-		offset += n
-
-		// Skip key and value data
-		offset += int(unshared) + int(valueLen)
-
-		if offset > len(b.data) {
-			break
-		}
-
-		count++
-	}
-
-	return count
 }
 
 // BlockIterator provides iteration over a single block
