@@ -154,84 +154,10 @@ func BenchmarkBlockIteration(b *testing.B) {
 
 // Helper function to parse block data for testing
 func parseBlockForTesting(data []byte) (*Block, error) {
-	if len(data) < 4 {
-		return nil, fmt.Errorf("block too small")
-	}
-
-	// Read number of restart points from the end
-	dataLen := len(data)
-	numRestarts := uint32(data[dataLen-4]) | uint32(data[dataLen-3])<<8 |
-		uint32(data[dataLen-2])<<16 | uint32(data[dataLen-1])<<24
-
-	// Check if we have enough data for the restart points
-	metadataSize := 4 + int(numRestarts)*4
-	if dataLen < metadataSize {
-		return nil, fmt.Errorf("block too small for restart points")
-	}
-
-	// Read restart points
-	restarts := make([]uint32, numRestarts)
-	for i := range numRestarts {
-		offset := dataLen - 4 - 4*int(numRestarts) + 4*int(i)
-		restarts[i] = uint32(data[offset]) | uint32(data[offset+1])<<8 |
-			uint32(data[offset+2])<<16 | uint32(data[offset+3])<<24
-	}
-
-	// Calculate the data portion size
-	dataSize := dataLen - metadataSize
-	var blockData []byte
-	if dataSize > 0 {
-		blockData = make([]byte, dataSize)
-		copy(blockData, data[:dataSize])
-	}
-
-	// Count entries
-	var numEntries uint32
-	offset := 0
-	for offset < len(blockData) {
-		// Skip shared length
-		for offset < len(blockData) && blockData[offset] >= 0x80 {
-			offset++
-		}
-		if offset >= len(blockData) {
-			break
-		}
-		offset++
-
-		// Skip unshared length
-		for offset < len(blockData) && blockData[offset] >= 0x80 {
-			offset++
-		}
-		if offset >= len(blockData) {
-			break
-		}
-		unshared := int(blockData[offset] & 0x7f)
-		offset++
-
-		// Skip value length
-		for offset < len(blockData) && blockData[offset] >= 0x80 {
-			offset++
-		}
-		if offset >= len(blockData) {
-			break
-		}
-		valueLen := int(blockData[offset] & 0x7f)
-		offset++
-
-		// Skip key and value data
-		offset += unshared + valueLen
-		if offset > len(blockData) {
-			break
-		}
-
-		numEntries++
-	}
-
-	return &Block{
-		data:       blockData,
-		restarts:   restarts,
-		numEntries: numEntries,
-	}, nil
+	// Use a dummy reader to get access to the real parseBlock method
+	// This ensures the test is using the same logic as production
+	r := &SSTableReader{}
+	return r.parseBlock(data)
 }
 
 // Test to verify that restart entries are being optimized
