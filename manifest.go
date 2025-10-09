@@ -183,6 +183,9 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 			// Largest key length and key
 			binary.Write(&buf, binary.LittleEndian, uint32(len(file.LargestKey)))
 			buf.Write(file.LargestKey)
+
+			// Number of entries (new field for bloom filter support)
+			binary.Write(&buf, binary.LittleEndian, file.NumEntries)
 		}
 	}
 
@@ -408,12 +411,22 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 				return nil, err
 			}
 
+			// Read number of entries (optional field for backwards compatibility)
+			var numEntries uint64
+			if buf.Len() >= 8 {
+				if err := binary.Read(buf, binary.LittleEndian, &numEntries); err != nil {
+					// If read fails, default to 0 (backwards compatible)
+					numEntries = 0
+				}
+			}
+
 			// Create file metadata
 			file := &FileMetadata{
 				FileNum:     fileNum,
 				Size:        fileSize,
 				SmallestKey: smallestKey,
 				LargestKey:  largestKey,
+				NumEntries:  numEntries,
 			}
 
 			edit.AddFile(int(level), file)

@@ -828,6 +828,7 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 		Size:        writer.EstimatedSize(),
 		SmallestKey: writer.SmallestKey(),
 		LargestKey:  writer.LargestKey(),
+		NumEntries:  uint64(entriesWritten),
 	}
 
 	edit := NewVersionEdit()

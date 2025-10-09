@@ -452,6 +452,7 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 	var skipCurrentUserKey bool
 
 	entryCount := 0
+	currentFileEntryCount := 0
 	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		k := iter.Key()
 		v := iter.Value()
@@ -508,6 +509,7 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 				return nil, err
 			}
 			currentFileSize = 0
+			currentFileEntryCount = 0
 			compaction.stats.FilesWritten++
 		}
 
@@ -516,6 +518,8 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 		if err != nil {
 			return nil, err
 		}
+
+		currentFileEntryCount++
 
 		// Update stats (still track raw key+value bytes for statistics)
 		compaction.stats.BytesWritten += uint64(len(k) + len(v))
@@ -526,8 +530,9 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 			cm.logger.Info("CLOSING FILE",
 				"currentFileSize", currentFileSize,
 				"maxOutputFileSize", compaction.maxOutputFileSize,
-				"fileNum", outputFileNum)
-			if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction); err != nil {
+				"fileNum", outputFileNum,
+				"entriesInFile", currentFileEntryCount)
+			if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction, currentFileEntryCount); err != nil {
 				return nil, err
 			}
 			currentWriter = nil
@@ -540,9 +545,10 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 	if currentWriter != nil {
 		cm.logger.Info("FINISHING LAST FILE",
 			"entryCount", entryCount,
+			"entriesInFile", currentFileEntryCount,
 			"currentFileSize", int64(currentWriter.EstimatedSize()),
 			"maxOutputFileSize", compaction.maxOutputFileSize)
-		if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction); err != nil {
+		if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction, currentFileEntryCount); err != nil {
 			return nil, err
 		}
 	} else {
@@ -616,7 +622,7 @@ func (cm *CompactionManager) createOutputFile(fileNum uint64) (*sstable.SSTableW
 }
 
 // finishOutputFile finishes writing an output file and adds it to the compaction.
-func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fileNum uint64, compaction *Compaction) error {
+func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fileNum uint64, compaction *Compaction, numEntries int) error {
 	if err := writer.Finish(); err != nil {
 		return err
 	}
@@ -633,6 +639,7 @@ func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fil
 		Size:        writer.EstimatedSize(),
 		SmallestKey: writer.SmallestKey(),
 		LargestKey:  writer.LargestKey(),
+		NumEntries:  uint64(numEntries),
 	}
 
 	compaction.outputFiles = append(compaction.outputFiles, fileMetadata)
@@ -640,6 +647,7 @@ func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fil
 	cm.logger.Info("COMPACTION_OUTPUT_FILE_CREATED",
 		"fileNum", fileNum,
 		"size", fileMetadata.Size,
+		"numEntries", numEntries,
 		"totalOutputFiles", len(compaction.outputFiles))
 
 	return nil

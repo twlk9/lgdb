@@ -19,6 +19,7 @@ type FileMetadata struct {
 	Size        uint64
 	SmallestKey keys.EncodedKey
 	LargestKey  keys.EncodedKey
+	NumEntries  uint64 // Number of entries in this SSTable
 }
 
 // RangeTombstoneFileMetadata contains metadata about a range tombstone SSTable file
