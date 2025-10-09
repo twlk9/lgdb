@@ -57,14 +57,14 @@ func TestBlockCache_LRUEviction(t *testing.T) {
 	defer cache.Close()
 
 	// Add items to fill and exceed the cache capacity
-	for i := 0; i < numItemsToAdd; i++ {
+	for i := range numItemsToAdd {
 		key := GenerateCacheKey(uint64(i), 0)
 		cache.Put(key, make([]byte, itemSize))
 	}
 
 	// The first 500 items should have been evicted.
 	evictedCount := 0
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		key := GenerateCacheKey(uint64(i), 0)
 		if _, found := cache.Get(key); !found {
 			evictedCount++
@@ -95,15 +95,15 @@ func TestBlockCache_ConcurrentAccess(t *testing.T) {
 	itemsPerGoroutine := 100
 
 	// Run concurrent writers
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			for j := 0; j < itemsPerGoroutine; j++ {
+			for j := range itemsPerGoroutine {
 				fileNum := uint64(goroutineID)
 				offset := uint64(j)
 				key := GenerateCacheKey(fileNum, offset)
-				value := []byte(fmt.Sprintf("value-%d-%d", fileNum, offset))
+				value := fmt.Appendf(nil, "value-%d-%d", fileNum, offset)
 				cache.Put(key, value)
 			}
 		}(i)
@@ -112,15 +112,15 @@ func TestBlockCache_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Run concurrent readers to verify data
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
-			for j := 0; j < itemsPerGoroutine; j++ {
+			for j := range itemsPerGoroutine {
 				fileNum := uint64(goroutineID)
 				offset := uint64(j)
 				key := GenerateCacheKey(fileNum, offset)
-				expectedValue := []byte(fmt.Sprintf("value-%d-%d", fileNum, offset))
+				expectedValue := fmt.Appendf(nil, "value-%d-%d", fileNum, offset)
 
 				retrieved, found := cache.Get(key)
 				if !found {

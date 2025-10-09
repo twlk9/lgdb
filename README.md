@@ -1,2 +1,2 @@
 # lgdb
-Simple LSM Tree database in Go
+Level Go DB - Simple LSM Tree database in Go
