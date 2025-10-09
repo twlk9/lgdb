@@ -653,7 +653,7 @@ func TestSequenceRecoveryWithoutWAL(t *testing.T) {
 
 	// Write enough data to trigger a flush
 	numKeys := 100
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := []byte("key" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)))
 		value := []byte("value" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)) + strings.Repeat("x", 30))
 
@@ -702,7 +702,7 @@ func TestSequenceRecoveryWithoutWAL(t *testing.T) {
 	}
 
 	// Verify data is still accessible
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := []byte("key" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)))
 		expectedValue := []byte("value" + string(rune('0'+i%10)) + string(rune('0'+(i/10)%10)) + string(rune('0'+(i/100)%10)) + strings.Repeat("x", 30))
 

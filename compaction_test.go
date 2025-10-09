@@ -1432,11 +1432,11 @@ func TestKeyNotExistsBeyondOutputLevel(t *testing.T) {
 	// Test cases for KeyNotExistsBeyondOutputLevel
 	// These test the logic regardless of actual data distribution
 	testCases := []struct {
-		name         string
-		userKey      string
-		outputLevel  int
-		shouldExist  bool
-		description  string
+		name        string
+		userKey     string
+		outputLevel int
+		shouldExist bool
+		description string
 	}{
 		{
 			name:        "key not in any range",

@@ -26,8 +26,8 @@ type blockCacheShard struct {
 
 // cacheEntry holds the cached block data and its LRU list element.
 type cacheEntry struct {
-	key    uint64
-	value  []byte
+	key     uint64
+	value   []byte
 	element *list.Element
 }
 
