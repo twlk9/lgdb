@@ -22,16 +22,6 @@ type FileMetadata struct {
 	NumEntries  uint64 // Number of entries in this SSTable
 }
 
-// RangeTombstoneFileMetadata contains metadata about a range tombstone SSTable file
-type RangeTombstoneFileMetadata struct {
-	FileNum        uint64
-	Level          int // 0 for L0, 1 for L1
-	Size           uint64
-	SmallestKey    keys.UserKey // Smallest range start key
-	LargestKey     keys.UserKey // Largest range end key
-	TombstoneCount int          // Number of tombstones in file
-}
-
 // Version represents a specific version of the database state
 // It tracks which SSTable files are part of this version
 type Version struct {
@@ -404,21 +394,13 @@ type VersionEdit struct {
 
 	// Files to remove at each level (by file number)
 	removeFiles map[int][]uint64
-
-	// Range tombstone files to add at each level
-	addRangeTombstoneFiles map[int][]*RangeTombstoneFileMetadata
-
-	// Range tombstone files to remove at each level (by file number)
-	removeRangeTombstoneFiles map[int][]uint64
 }
 
 // NewVersionEdit creates a new version edit
 func NewVersionEdit() *VersionEdit {
 	return &VersionEdit{
-		addFiles:                  make(map[int][]*FileMetadata),
-		removeFiles:               make(map[int][]uint64),
-		addRangeTombstoneFiles:    make(map[int][]*RangeTombstoneFileMetadata),
-		removeRangeTombstoneFiles: make(map[int][]uint64),
+		addFiles:    make(map[int][]*FileMetadata),
+		removeFiles: make(map[int][]uint64),
 	}
 }
 
@@ -430,16 +412,6 @@ func (ve *VersionEdit) AddFile(level int, file *FileMetadata) {
 // RemoveFile marks a file to be removed from the specified level
 func (ve *VersionEdit) RemoveFile(level int, fileNum uint64) {
 	ve.removeFiles[level] = append(ve.removeFiles[level], fileNum)
-}
-
-// AddRangeTombstoneFile marks a range tombstone file to be added at the specified level
-func (ve *VersionEdit) AddRangeTombstoneFile(level int, file *RangeTombstoneFileMetadata) {
-	ve.addRangeTombstoneFiles[level] = append(ve.addRangeTombstoneFiles[level], file)
-}
-
-// RemoveRangeTombstoneFile marks a range tombstone file to be removed from the specified level
-func (ve *VersionEdit) RemoveRangeTombstoneFile(level int, fileNum uint64) {
-	ve.removeRangeTombstoneFiles[level] = append(ve.removeRangeTombstoneFiles[level], fileNum)
 }
 
 // Apply applies this edit to a version
