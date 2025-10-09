@@ -25,10 +25,9 @@ const (
 	ManifestHeaderSize = 4 + 4 + 1
 
 	// Version edit tags
-	tagAddFile                  = 1
-	tagRemoveFile               = 2
-	tagAddRangeTombstoneFile    = 3
-	tagRemoveRangeTombstoneFile = 4
+	tagAddFile            = 1
+	tagRemoveFile         = 2
+	tagAddFileWithEntries = 3 // Same as tagAddFile but includes NumEntries field
 )
 
 // CRC32 table using the same polynomial as the original implementation (0xEDB88320)
@@ -164,8 +163,8 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 	// Write added files
 	for level, files := range edit.addFiles {
 		for _, file := range files {
-			// Tag for add file
-			buf.WriteByte(tagAddFile)
+			// Tag for add file with entries
+			buf.WriteByte(tagAddFileWithEntries)
 
 			// Level
 			binary.Write(&buf, binary.LittleEndian, uint32(level))
@@ -184,7 +183,7 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 			binary.Write(&buf, binary.LittleEndian, uint32(len(file.LargestKey)))
 			buf.Write(file.LargestKey)
 
-			// Number of entries (new field for bloom filter support)
+			// Number of entries
 			binary.Write(&buf, binary.LittleEndian, file.NumEntries)
 		}
 	}
@@ -194,48 +193,6 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 		for _, fileNum := range fileNums {
 			// Tag for remove file
 			buf.WriteByte(tagRemoveFile)
-
-			// Level
-			binary.Write(&buf, binary.LittleEndian, uint32(level))
-
-			// File number
-			binary.Write(&buf, binary.LittleEndian, fileNum)
-		}
-	}
-
-	// Write added range tombstone files
-	for level, files := range edit.addRangeTombstoneFiles {
-		for _, file := range files {
-			// Tag for add range tombstone file
-			buf.WriteByte(tagAddRangeTombstoneFile)
-
-			// Level
-			binary.Write(&buf, binary.LittleEndian, uint32(level))
-
-			// File number
-			binary.Write(&buf, binary.LittleEndian, file.FileNum)
-
-			// File size
-			binary.Write(&buf, binary.LittleEndian, file.Size)
-
-			// Tombstone count
-			binary.Write(&buf, binary.LittleEndian, uint32(file.TombstoneCount))
-
-			// Smallest key length and key
-			binary.Write(&buf, binary.LittleEndian, uint32(len(file.SmallestKey)))
-			buf.Write(file.SmallestKey)
-
-			// Largest key length and key
-			binary.Write(&buf, binary.LittleEndian, uint32(len(file.LargestKey)))
-			buf.Write(file.LargestKey)
-		}
-	}
-
-	// Write removed range tombstone files
-	for level, fileNums := range edit.removeRangeTombstoneFiles {
-		for _, fileNum := range fileNums {
-			// Tag for remove range tombstone file
-			buf.WriteByte(tagRemoveRangeTombstoneFile)
 
 			// Level
 			binary.Write(&buf, binary.LittleEndian, uint32(level))
@@ -373,6 +330,7 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 
 		switch tag {
 		case tagAddFile:
+			// Old format without NumEntries - for backwards compatibility
 			// Read level
 			var level uint32
 			if err := binary.Read(buf, binary.LittleEndian, &level); err != nil {
@@ -411,13 +369,61 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 				return nil, err
 			}
 
-			// Read number of entries (optional field for backwards compatibility)
+			// Create file metadata (NumEntries = 0 for old format)
+			file := &FileMetadata{
+				FileNum:     fileNum,
+				Size:        fileSize,
+				SmallestKey: smallestKey,
+				LargestKey:  largestKey,
+				NumEntries:  0,
+			}
+
+			edit.AddFile(int(level), file)
+
+		case tagAddFileWithEntries:
+			// New format with NumEntries
+			// Read level
+			var level uint32
+			if err := binary.Read(buf, binary.LittleEndian, &level); err != nil {
+				return nil, err
+			}
+
+			// Read file number
+			var fileNum uint64
+			if err := binary.Read(buf, binary.LittleEndian, &fileNum); err != nil {
+				return nil, err
+			}
+
+			// Read file size
+			var fileSize uint64
+			if err := binary.Read(buf, binary.LittleEndian, &fileSize); err != nil {
+				return nil, err
+			}
+
+			// Read smallest key
+			var smallestKeyLen uint32
+			if err := binary.Read(buf, binary.LittleEndian, &smallestKeyLen); err != nil {
+				return nil, err
+			}
+			smallestKey := make([]byte, smallestKeyLen)
+			if _, err := io.ReadFull(buf, smallestKey); err != nil {
+				return nil, err
+			}
+
+			// Read largest key
+			var largestKeyLen uint32
+			if err := binary.Read(buf, binary.LittleEndian, &largestKeyLen); err != nil {
+				return nil, err
+			}
+			largestKey := make([]byte, largestKeyLen)
+			if _, err := io.ReadFull(buf, largestKey); err != nil {
+				return nil, err
+			}
+
+			// Read number of entries
 			var numEntries uint64
-			if buf.Len() >= 8 {
-				if err := binary.Read(buf, binary.LittleEndian, &numEntries); err != nil {
-					// If read fails, default to 0 (backwards compatible)
-					numEntries = 0
-				}
+			if err := binary.Read(buf, binary.LittleEndian, &numEntries); err != nil {
+				return nil, err
 			}
 
 			// Create file metadata
@@ -445,78 +451,6 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 			}
 
 			edit.RemoveFile(int(level), fileNum)
-
-		case tagAddRangeTombstoneFile:
-			// Read level
-			var level uint32
-			if err := binary.Read(buf, binary.LittleEndian, &level); err != nil {
-				return nil, err
-			}
-
-			// Read file number
-			var fileNum uint64
-			if err := binary.Read(buf, binary.LittleEndian, &fileNum); err != nil {
-				return nil, err
-			}
-
-			// Read file size
-			var fileSize uint64
-			if err := binary.Read(buf, binary.LittleEndian, &fileSize); err != nil {
-				return nil, err
-			}
-
-			// Read tombstone count
-			var tombstoneCount uint32
-			if err := binary.Read(buf, binary.LittleEndian, &tombstoneCount); err != nil {
-				return nil, err
-			}
-
-			// Read smallest key
-			var smallestKeyLen uint32
-			if err := binary.Read(buf, binary.LittleEndian, &smallestKeyLen); err != nil {
-				return nil, err
-			}
-			smallestKey := make([]byte, smallestKeyLen)
-			if _, err := io.ReadFull(buf, smallestKey); err != nil {
-				return nil, err
-			}
-
-			// Read largest key
-			var largestKeyLen uint32
-			if err := binary.Read(buf, binary.LittleEndian, &largestKeyLen); err != nil {
-				return nil, err
-			}
-			largestKey := make([]byte, largestKeyLen)
-			if _, err := io.ReadFull(buf, largestKey); err != nil {
-				return nil, err
-			}
-
-			// Create range tombstone file metadata
-			file := &RangeTombstoneFileMetadata{
-				FileNum:        fileNum,
-				Level:          int(level),
-				Size:           fileSize,
-				SmallestKey:    smallestKey,
-				LargestKey:     largestKey,
-				TombstoneCount: int(tombstoneCount),
-			}
-
-			edit.AddRangeTombstoneFile(int(level), file)
-
-		case tagRemoveRangeTombstoneFile:
-			// Read level
-			var level uint32
-			if err := binary.Read(buf, binary.LittleEndian, &level); err != nil {
-				return nil, err
-			}
-
-			// Read file number
-			var fileNum uint64
-			if err := binary.Read(buf, binary.LittleEndian, &fileNum); err != nil {
-				return nil, err
-			}
-
-			edit.RemoveRangeTombstoneFile(int(level), fileNum)
 
 		default:
 			return nil, fmt.Errorf("unknown tag: %d", tag)
