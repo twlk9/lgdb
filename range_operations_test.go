@@ -43,7 +43,7 @@ func TestBasicIteration(t *testing.T) {
 	}
 	db.Flush()
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	var keys []string
@@ -101,7 +101,7 @@ func TestRangeScan(t *testing.T) {
 		}
 	}
 
-	results, err := db.Scan([]byte("key2"), []byte("key4"))
+	results, err := db.Scan([]byte("key2"), []byte("key4"), nil)
 	if err != nil {
 		t.Fatalf("Scan error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestPrefixScan(t *testing.T) {
 		}
 	}
 
-	results, err := db.ScanPrefix([]byte("key"))
+	results, err := db.ScanPrefix([]byte("key"), nil)
 	if err != nil {
 		t.Fatalf("PrefixScan error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestBoundedIterator(t *testing.T) {
 	}
 
 	r := keys.NewRange([]byte("key2"), []byte("key4"))
-	iter := db.NewIteratorWithBounds(r)
+	iter := db.NewIteratorWithBounds(r, nil)
 	defer iter.Close()
 
 	var keys []string
@@ -260,7 +260,7 @@ func TestIterationAfterDeletions(t *testing.T) {
 		t.Fatalf("Failed to delete key4: %v", err)
 	}
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	var resultKeys []string
@@ -310,7 +310,7 @@ func TestRangeScanAfterDeletions(t *testing.T) {
 		t.Fatalf("Failed to delete key4: %v", err)
 	}
 
-	results, err := db.Scan([]byte("key1"), []byte("key5"))
+	results, err := db.Scan([]byte("key1"), []byte("key5"), nil)
 	if err != nil {
 		t.Fatalf("Scan error: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestRangeQueryAcrossLevels(t *testing.T) {
 	}
 
 	// Query a range that spans memtable and SSTables
-	results, err := db.Scan([]byte("key095"), []byte("key105"))
+	results, err := db.Scan([]byte("key095"), []byte("key105"), nil)
 	if err != nil {
 		t.Fatalf("Scan error: %v", err)
 	}
@@ -409,7 +409,7 @@ func TestIteratorSeek(t *testing.T) {
 		}
 	}
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Test seeking to existing key
@@ -562,7 +562,7 @@ func TestRangeQueryCrossBoundary(t *testing.T) {
 
 	// Test 1: Full range iteration should merge memtable and SSTable data correctly
 	t.Run("FullRangeIteration", func(t *testing.T) {
-		iter := db.NewIterator()
+		iter := db.NewIterator(nil)
 		defer iter.Close()
 
 		expectedKeys := []string{"key001", "key002", "key003", "key004", "key005", "key006", "key007", "key008", "key009", "key010"}
@@ -598,7 +598,7 @@ func TestRangeQueryCrossBoundary(t *testing.T) {
 	// Test 2: Bounded range that crosses boundary
 	t.Run("BoundedRangeCrossBoundary", func(t *testing.T) {
 		r := keys.NewRange([]byte("key003"), []byte("key008"))
-		iter := db.NewIteratorWithBounds(r)
+		iter := db.NewIteratorWithBounds(r, nil)
 		defer iter.Close()
 
 		expectedKeys := []string{"key003", "key004", "key005", "key006", "key007"}
@@ -643,7 +643,7 @@ func TestRangeQueryCrossBoundary(t *testing.T) {
 			t.Fatalf("Failed to update key005: %v", err)
 		}
 
-		iter := db.NewIterator()
+		iter := db.NewIterator(nil)
 		defer iter.Close()
 
 		// Verify that memtable updates override SSTable values
@@ -681,7 +681,7 @@ func TestRangeQueryCrossBoundary(t *testing.T) {
 			t.Fatalf("Failed to delete key007: %v", err)
 		}
 
-		iter := db.NewIterator()
+		iter := db.NewIterator(nil)
 		defer iter.Close()
 
 		var keys []string
@@ -749,7 +749,7 @@ func TestRangeQueryMultipleSSTables(t *testing.T) {
 	}
 
 	// Test iteration across all levels
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	expectedKeys := []string{"key10", "key15", "key20", "key30", "key35", "key40", "key50", "key55", "key60"}

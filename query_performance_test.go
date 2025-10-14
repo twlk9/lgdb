@@ -48,7 +48,7 @@ func BenchmarkRangeQueryPerformance(b *testing.B) {
 				start := i % (tt.numKeys - tt.rangeSize)
 				startKey := bdb.keys[start]
 
-				iter := bdb.db.NewIterator()
+				iter := bdb.db.NewIterator(nil)
 				count := 0
 				// Count exactly rangeSize keys starting from startKey
 				iter.Seek(startKey)
@@ -147,13 +147,13 @@ func BenchmarkIteratorOverhead(b *testing.B) {
 
 	b.Run("Iterator creation", func(b *testing.B) {
 		for b.Loop() {
-			iter := bdb.db.NewIterator()
+			iter := bdb.db.NewIterator(nil)
 			iter.Close()
 		}
 	})
 
 	b.Run("Iterator seek", func(b *testing.B) {
-		iter := bdb.db.NewIterator()
+		iter := bdb.db.NewIterator(nil)
 		defer iter.Close()
 
 		for i := 0; b.Loop(); i++ {
@@ -163,7 +163,7 @@ func BenchmarkIteratorOverhead(b *testing.B) {
 	})
 
 	b.Run("Iterator next", func(b *testing.B) {
-		iter := bdb.db.NewIterator()
+		iter := bdb.db.NewIterator(nil)
 		defer iter.Close()
 
 		// Start at beginning
@@ -205,7 +205,7 @@ func TestRangeQueryCorrectness(t *testing.T) {
 			start := 10 // Start from key 10
 			startKey := bdb.keys[start]
 
-			iter := bdb.db.NewIterator()
+			iter := bdb.db.NewIterator(nil)
 			defer iter.Close()
 
 			count := 0

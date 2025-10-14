@@ -123,7 +123,7 @@ func BenchmarkBlockIteratorSeek(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		// Create separate iterator for each goroutine
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(false)
 		defer iter.Close()
 
 		i := 0

@@ -193,7 +193,7 @@ func (r *SSTableReader) readFooter() error {
 
 		firstBlockHandle, n := decodeBlockHandle(r.buffers.value)
 		if n > 0 {
-			firstBlock, err := r.readDataBlock(firstBlockHandle)
+			firstBlock, err := r.readDataBlock(firstBlockHandle, false)
 			if err == nil && firstBlock.numEntries > 0 {
 				err := firstBlock.getEntry(0, r.buffers)
 				if err == nil {
@@ -210,7 +210,7 @@ func (r *SSTableReader) readFooter() error {
 
 		lastBlockHandle, n := decodeBlockHandle(r.buffers.value)
 		if n > 0 {
-			lastBlock, err := r.readDataBlock(lastBlockHandle)
+			lastBlock, err := r.readDataBlock(lastBlockHandle, false)
 			if err == nil && lastBlock.numEntries > 0 {
 				err := lastBlock.getEntry(int(lastBlock.numEntries-1), r.buffers)
 				if err == nil {
@@ -234,7 +234,7 @@ func (r *SSTableReader) Get(k keys.EncodedKey) ([]byte, keys.EncodedKey) {
 	}
 
 	// Read the data block
-	dataBlock, err := r.readDataBlock(blockHandle)
+	dataBlock, err := r.readDataBlock(blockHandle, false) // Get will always use the cache
 	if err != nil {
 		r.logger.Warn("Failed to read data block", "path", r.path, "error", err)
 		return nil, nil
@@ -349,11 +349,11 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 }
 
 // readDataBlock reads a data block from disk
-func (r *SSTableReader) readDataBlock(handle BlockHandle) (*Block, error) {
+func (r *SSTableReader) readDataBlock(handle BlockHandle, noBlockCache bool) (*Block, error) {
 	cacheKey := GenerateCacheKey(r.fileNum, handle.Offset)
 
 	// 1. Check cache first
-	if r.blockCache != nil {
+	if r.blockCache != nil && !noBlockCache {
 		if cachedBlock, found := r.blockCache.Get(cacheKey); found {
 			// Cache hit - parse and return
 			return r.parseBlock(cachedBlock)
@@ -388,7 +388,7 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle) (*Block, error) {
 	}
 
 	// 3. Put decompressed data into cache
-	if r.blockCache != nil {
+	if r.blockCache != nil && !noBlockCache {
 		// We cache the decompressed data, as decompression can be expensive.
 		// A defensive copy is made by the cache itself if needed.
 		r.blockCache.Put(cacheKey, decompressedData)
@@ -693,30 +693,33 @@ func (r *SSTableReader) LargestKey() keys.EncodedKey {
 
 // SSTableIterator provides iteration over an SSTable
 type SSTableIterator struct {
-	reader    *SSTableReader
-	blockIter *BlockIterator
-	indexIter *BlockIterator
-	bounds    *keys.Range
-	err       error
-	buffers   *EntryBuffers // Per-iterator buffers for key-value reconstruction
+	reader       *SSTableReader
+	blockIter    *BlockIterator
+	indexIter    *BlockIterator
+	bounds       *keys.Range
+	err          error
+	buffers      *EntryBuffers // Per-iterator buffers for key-value reconstruction
+	noBlockCache bool
 }
 
-// NewSSTableIterator creates a new SSTable iterator
-func (r *SSTableReader) NewIterator() *SSTableIterator {
+// NewIterator creates a new SSTable iterator
+func (r *SSTableReader) NewIterator(noBlockCache bool) *SSTableIterator {
 	return &SSTableIterator{
-		reader:    r,
-		indexIter: r.indexBlock.NewIterator(),
-		buffers:   NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
+		reader:       r,
+		indexIter:    r.indexBlock.NewIterator(),
+		buffers:      NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
+		noBlockCache: noBlockCache,
 	}
 }
 
 // NewIteratorWithBounds creates a new SSTable iterator with bounds
-func (r *SSTableReader) NewIteratorWithBounds(bounds *keys.Range) *SSTableIterator {
+func (r *SSTableReader) NewIteratorWithBounds(bounds *keys.Range, noBlockCache bool) *SSTableIterator {
 	iter := &SSTableIterator{
-		reader:    r,
-		indexIter: r.indexBlock.NewIterator(),
-		buffers:   NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
-		bounds:    bounds,
+		reader:       r,
+		indexIter:    r.indexBlock.NewIterator(),
+		buffers:      NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
+		bounds:       bounds,
+		noBlockCache: noBlockCache,
 	}
 
 	return iter
@@ -892,7 +895,7 @@ func (it *SSTableIterator) loadCurrentBlock() {
 	}
 
 	// Read the data block
-	block, err := it.reader.readDataBlock(handle)
+	block, err := it.reader.readDataBlock(handle, it.noBlockCache)
 	if err != nil {
 		it.err = err
 		return

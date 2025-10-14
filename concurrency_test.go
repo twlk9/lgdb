@@ -1,6 +1,3 @@
-//go:build integration || stress
-// +build integration stress
-
 package lgdb
 
 import (
@@ -36,11 +33,11 @@ func TestConcurrentReadsWrites(t *testing.T) {
 	var readErrors int64
 
 	// Start writers
-	for w := 0; w < numWriters; w++ {
+	for w := range numWriters {
 		wg.Add(1)
 		go func(writerID int) {
 			defer wg.Done()
-			for i := 0; i < numOperations; i++ {
+			for i := range numOperations {
 				key := fmt.Sprintf("writer_%d_key_%d", writerID, i)
 				value := fmt.Sprintf("writer_%d_value_%d", writerID, i)
 
@@ -61,11 +58,11 @@ func TestConcurrentReadsWrites(t *testing.T) {
 	}
 
 	// Start readers
-	for r := 0; r < numReaders; r++ {
+	for r := range numReaders {
 		wg.Add(1)
 		go func(readerID int) {
 			defer wg.Done()
-			for i := 0; i < numOperations*2; i++ {
+			for i := range numOperations * 2 {
 				// Read from different writers
 				writerID := i % numWriters
 				keyID := i % numOperations
@@ -93,7 +90,7 @@ func TestConcurrentReadsWrites(t *testing.T) {
 	}
 
 	// Verify some data integrity
-	for w := 0; w < numWriters; w++ {
+	for w := range numWriters {
 		for i := numOperations - 10; i < numOperations; i++ { // Check last 10 keys per writer
 			key := fmt.Sprintf("writer_%d_key_%d", w, i)
 			expectedValue := fmt.Sprintf("writer_%d_value_%d", w, i)
@@ -131,12 +128,12 @@ func TestConcurrentCompaction(t *testing.T) {
 	var operationErrors int64
 
 	// Start workers that perform various operations
-	for w := 0; w < numWorkers; w++ {
+	for w := range numWorkers {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 
-			for i := 0; i < numOperations; i++ {
+			for i := range numOperations {
 				switch i % 4 {
 				case 0: // Put operation
 					key := fmt.Sprintf("worker_%d_put_%d", workerID, i)
@@ -160,7 +157,7 @@ func TestConcurrentCompaction(t *testing.T) {
 					}
 
 				case 3: // Iterator operation
-					iter := db.NewIterator()
+					iter := db.NewIterator(nil)
 					count := 0
 					for iter.SeekToFirst(); iter.Valid() && count < 10; iter.Next() {
 						count++
@@ -183,7 +180,7 @@ func TestConcurrentCompaction(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			time.Sleep(50 * time.Millisecond)
 			db.CompactRange() // Force compaction
 		}
@@ -213,7 +210,7 @@ func TestConcurrentIterators(t *testing.T) {
 	defer db.Close()
 
 	// Setup initial data
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := fmt.Sprintf("key_%03d", i)
 		value := fmt.Sprintf("value_%03d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -226,12 +223,12 @@ func TestConcurrentIterators(t *testing.T) {
 	var iteratorErrors int64
 
 	// Start multiple iterators concurrently
-	for i := 0; i < numIterators; i++ {
+	for i := range numIterators {
 		wg.Add(1)
 		go func(iteratorID int) {
 			defer wg.Done()
 
-			iter := db.NewIterator()
+			iter := db.NewIterator(nil)
 			defer iter.Close()
 
 			count := 0
@@ -415,12 +412,12 @@ func TestDeadlockPrevention(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Start multiple goroutines doing various operations
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 
-			for j := 0; j < numOperations; j++ {
+			for j := range numOperations {
 				key := fmt.Sprintf("deadlock_test_%d_%d", id, j)
 				value := fmt.Sprintf("value_%d_%d", id, j)
 
@@ -433,7 +430,7 @@ func TestDeadlockPrevention(t *testing.T) {
 				case 2:
 					db.Delete([]byte(key))
 				case 3:
-					iter := db.NewIterator()
+					iter := db.NewIterator(nil)
 					iter.SeekToFirst()
 					if iter.Valid() {
 						iter.Next()
@@ -488,14 +485,14 @@ func TestRaceConditionDetection(t *testing.T) {
 	// Shared key space to increase chance of race conditions
 	const sharedKeySpace = 100
 
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()
 
 			rng := rand.New(rand.NewSource(time.Now().UnixNano() + int64(goroutineID)))
 
-			for j := 0; j < numOperationsPerGoroutine; j++ {
+			for j := range numOperationsPerGoroutine {
 				// Use shared key space to increase contention
 				key := fmt.Sprintf("race_key_%d", rng.Intn(sharedKeySpace))
 				value := fmt.Sprintf("race_value_%d_%d", goroutineID, j)
@@ -508,7 +505,7 @@ func TestRaceConditionDetection(t *testing.T) {
 				case 2: // Delete
 					db.Delete([]byte(key))
 				case 3: // Iterator
-					iter := db.NewIterator()
+					iter := db.NewIterator(nil)
 					iter.SeekToFirst()
 					if iter.Valid() {
 						iter.Next()
@@ -555,7 +552,7 @@ func TestMemoryConsistency(t *testing.T) {
 	var inconsistencies int64
 
 	// Initialize keys with known values
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("consistency_key_%d", i)
 		value := fmt.Sprintf("initial_value_%d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -564,12 +561,12 @@ func TestMemoryConsistency(t *testing.T) {
 	}
 
 	// Start writers that update values in a predictable pattern (no deletions)
-	for w := 0; w < numWriters; w++ {
+	for w := range numWriters {
 		wg.Add(1)
 		go func(writerID int) {
 			defer wg.Done()
 
-			for round := 0; round < numRounds; round++ {
+			for round := range numRounds {
 				// Each writer updates its subset of keys
 				startKey := (writerID * numKeys) / numWriters
 				endKey := ((writerID + 1) * numKeys) / numWriters
@@ -591,14 +588,14 @@ func TestMemoryConsistency(t *testing.T) {
 	}
 
 	// Start readers that verify consistency
-	for r := 0; r < numReaders; r++ {
+	for r := range numReaders {
 		wg.Add(1)
 		go func(readerID int) {
 			defer wg.Done()
 
-			for round := 0; round < numRounds*2; round++ {
+			for range numRounds * 2 {
 				// Read a random subset of keys and verify they have consistent values
-				for attempt := 0; attempt < 10; attempt++ {
+				for range 10 {
 					keyID := rand.Intn(numKeys)
 					key := fmt.Sprintf("consistency_key_%d", keyID)
 
@@ -656,7 +653,7 @@ func TestConcurrentIteratorWrites(t *testing.T) {
 	defer db.Close()
 
 	// Setup initial data
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := fmt.Sprintf("key_%04d", i)
 		value := fmt.Sprintf("value_%04d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -679,7 +676,7 @@ func TestConcurrentIteratorWrites(t *testing.T) {
 			case <-stopChan:
 				return
 			default:
-				iter := db.NewIterator()
+				iter := db.NewIterator(nil)
 
 				// Track keys we've seen to detect duplicates
 				seenKeys := make(map[string]bool)
@@ -774,7 +771,7 @@ func TestConcurrentPrefixScanWrites(t *testing.T) {
 	// Setup data with predictable prefixes
 	prefixes := []string{"user_", "item_", "order_"}
 	for _, prefix := range prefixes {
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			key := fmt.Sprintf("%s%04d", prefix, i)
 			value := fmt.Sprintf("value_%s%04d", prefix, i)
 			if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -799,7 +796,7 @@ func TestConcurrentPrefixScanWrites(t *testing.T) {
 				case <-stopChan:
 					return
 				default:
-					iter, err := db.ScanPrefix([]byte(scanPrefix))
+					iter, err := db.ScanPrefix([]byte(scanPrefix), nil)
 					if err != nil {
 						atomic.AddInt64(&scanErrors, 1)
 						continue

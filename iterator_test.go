@@ -26,7 +26,7 @@ func TestIteratorEdgeCasesEmpty(t *testing.T) {
 	defer db.Close()
 
 	// Test empty database iteration
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// All positioning should result in invalid iterator
@@ -75,7 +75,7 @@ func TestIteratorEdgeCasesSingleKey(t *testing.T) {
 		t.Fatalf("Failed to put key: %v", err)
 	}
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Test SeekToFirst
@@ -128,7 +128,7 @@ func TestIteratorSeekEdgeCases(t *testing.T) {
 		}
 	}
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	seekTests := []struct {
@@ -223,9 +223,9 @@ func TestIteratorBoundaryEdgeCases(t *testing.T) {
 			var iter *DBIterator
 			if test.start != nil || test.limit != nil {
 				rng := &keys.Range{Start: test.start, Limit: test.limit}
-				iter = db.NewIteratorWithBounds(rng)
+				iter = db.NewIteratorWithBounds(rng, nil)
 			} else {
-				iter = db.NewIterator()
+				iter = db.NewIterator(nil)
 			}
 			defer iter.Close()
 
@@ -274,7 +274,7 @@ func TestIteratorForwardBoundaryEdgeCases(t *testing.T) {
 		}
 	}
 
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Test forward iteration from first to last
@@ -363,7 +363,7 @@ func TestIteratorSpecialCharacterKeys(t *testing.T) {
 	}
 
 	// Test iteration order
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	var actualKeys []string
@@ -434,7 +434,7 @@ func TestIteratorLargeKeys(t *testing.T) {
 	}
 
 	// Test iteration with large keys
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	iter.SeekToFirst()
@@ -471,7 +471,7 @@ func TestIteratorConcurrentModifications(t *testing.T) {
 	}
 
 	// Create iterator
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Collect initial snapshot
@@ -531,7 +531,7 @@ func TestIteratorConcurrentModifications(t *testing.T) {
 	}
 
 	// New iterator should see updated state
-	newIter := db.NewIterator()
+	newIter := db.NewIterator(nil)
 	defer newIter.Close()
 
 	newData := make(map[string][]byte)

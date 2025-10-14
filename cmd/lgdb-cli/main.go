@@ -198,7 +198,7 @@ func dumpCommand(args []string) error {
 	fmt.Printf("Contents:\n\n")
 
 	// Create iterator and dump all entries
-	iter := reader.NewIterator()
+	iter := reader.NewIterator(false)
 	defer iter.Close()
 
 	count := 0
@@ -370,7 +370,7 @@ func verifyCommand(args []string) error {
 	fmt.Printf("Verifying database integrity: %s\n", dbPath)
 
 	// Test basic iteration to verify data can be read
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	count := 0
@@ -508,7 +508,7 @@ func scanKeyCommand(args []string) error {
 		}
 
 		// Create iterator and check for matching keys
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(false)
 		iter.SeekToFirst()
 
 		matchingKeys := 0

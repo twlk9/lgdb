@@ -51,7 +51,7 @@ func TestLargePrefixScan(t *testing.T) {
 
 	// Test prefix "key889" which should match key8890, key8891, key8892, ..., key8899 (10 keys)
 	t.Log("Testing prefix 'key889'...")
-	prefixIter, err := db.ScanPrefix([]byte("key889"))
+	prefixIter, err := db.ScanPrefix([]byte("key889"), nil)
 	if err != nil {
 	}
 	defer prefixIter.Close()
@@ -79,7 +79,7 @@ func TestLargePrefixScan(t *testing.T) {
 
 	// Test prefix "key1" which should match key1000-key1999 (1000 keys)
 	t.Log("Testing prefix 'key1'...")
-	prefix1Iter, err := db.ScanPrefix([]byte("key1"))
+	prefix1Iter, err := db.ScanPrefix([]byte("key1"), nil)
 	if err != nil {
 	}
 	defer prefix1Iter.Close()
@@ -97,7 +97,7 @@ func TestLargePrefixScan(t *testing.T) {
 
 	// Test prefix "key99" which should match key9900-key9999 (100 keys)
 	t.Log("Testing prefix 'key99'...")
-	prefix99Iter, err := db.ScanPrefix([]byte("key99"))
+	prefix99Iter, err := db.ScanPrefix([]byte("key99"), nil)
 	if err != nil {
 	}
 	defer prefix99Iter.Close()
@@ -116,7 +116,7 @@ func TestLargePrefixScan(t *testing.T) {
 	// Compare with manual bounds for verification
 	t.Log("Comparing with manual bounds for 'key889'...")
 	bounds := keys.NewRange([]byte("key889"), []byte("key88:"))
-	manualIter := db.NewIteratorWithBounds(bounds)
+	manualIter := db.NewIteratorWithBounds(bounds, nil)
 	defer manualIter.Close()
 
 	var manualResults []string

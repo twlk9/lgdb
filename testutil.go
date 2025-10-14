@@ -105,7 +105,7 @@ func (sv *StateValidator) validateCrossLevelConsistency() {
 // validateIteratorConsistency ensures iterators see consistent snapshots
 func (sv *StateValidator) validateIteratorConsistency() {
 	// Create an iterator and verify it sees all expected data
-	iter := sv.db.NewIterator()
+	iter := sv.db.NewIterator(nil)
 	defer iter.Close()
 
 	// Build expected sorted key list
@@ -147,7 +147,7 @@ func (sv *StateValidator) validateIteratorConsistency() {
 
 // validateNoPhantomData ensures no unexpected data exists
 func (sv *StateValidator) validateNoPhantomData() {
-	iter := sv.db.NewIterator()
+	iter := sv.db.NewIterator(nil)
 	defer iter.Close()
 
 	iter.SeekToFirst()
