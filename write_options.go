@@ -52,12 +52,12 @@ type ReadOptions struct {
 	// DontFillCache indicates whether blocks read by this operation should be
 	// added to the block cache. If true, blocks will not be cached.
 	// This is useful for operations like range scans that might pollute the cache.
-	DontFillCache bool
+	NoBlockCache bool
 }
 
 // DefaultReadOptions returns the default read options
 func DefaultReadOptions() *ReadOptions {
 	return &ReadOptions{
-		DontFillCache: false,
+		NoBlockCache: false,
 	}
 }

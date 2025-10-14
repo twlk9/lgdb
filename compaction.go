@@ -589,7 +589,7 @@ func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, ve
 
 			cachedReaders = append(cachedReaders, cachedReader)
 			reader := cachedReader.Reader()
-			iter := reader.NewIterator()
+			iter := reader.NewIterator(true) // Disable block cache for compaction
 			iterators = append(iterators, iter)
 			mergedIter.AddIterator(iter)
 			compaction.stats.FilesRead++

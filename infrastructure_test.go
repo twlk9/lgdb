@@ -227,7 +227,7 @@ func inspectL1File(dbPath string, targetKey byte) {
 			continue
 		}
 
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(false)
 		found := false
 		count := 0
 		var allKeys []byte
@@ -310,7 +310,7 @@ func analyzeSSTableBlocks(reader *sstable.SSTableReader, targetKey byte) {
 	// This is a debugging function to understand the block structure
 
 	// First, let's try to read all entries and group them to understand block boundaries
-	iter := reader.NewIterator()
+	iter := reader.NewIterator(false)
 	defer iter.Close()
 
 	blockNum := 0
@@ -375,7 +375,7 @@ func analyzeSSTableBlocks(reader *sstable.SSTableReader, targetKey byte) {
 
 	// Try to scan all blocks to find where key 31 actually ended up
 	fmt.Printf("\nScanning for key %d in ALL blocks:\n", targetKey)
-	iter2 := reader.NewIterator()
+	iter2 := reader.NewIterator(false)
 	defer iter2.Close()
 
 	blockNum = 0

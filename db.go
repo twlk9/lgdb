@@ -578,7 +578,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	}
 
 	// Use iterator infrastructure for unified range tombstone handling
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	iter.Seek(key)
@@ -1067,7 +1067,7 @@ func (db *DB) openSSTable(fileNum uint64) (*CachedReader, error) {
 
 // Scan performs a range scan from startKey to endKey [start, end).
 // Returns an iterator that walks through all keys in the specified range (start inclusive, end exclusive).
-func (db *DB) Scan(startKey, endKey keys.UserKey) (*DBIterator, error) {
+func (db *DB) Scan(startKey, endKey keys.UserKey, opts *ReadOptions) (*DBIterator, error) {
 	if !keys.IsValidUserKey(startKey) || !keys.IsValidUserKey(endKey) {
 		return nil, ErrInvalidKey
 	}
@@ -1081,13 +1081,12 @@ func (db *DB) Scan(startKey, endKey keys.UserKey) (*DBIterator, error) {
 	}
 
 	r := keys.NewRange(startKey, endKey)
-
-	return db.NewIteratorWithBounds(r), nil
+	return db.NewIteratorWithBounds(r, opts), nil
 }
 
 // ScanPrefix performs a prefix scan.
 // Returns an iterator for all keys that start with the given prefix.
-func (db *DB) ScanPrefix(prefix []byte) (*DBIterator, error) {
+func (db *DB) ScanPrefix(prefix []byte, opts *ReadOptions) (*DBIterator, error) {
 	if !keys.IsValidUserKey(prefix) {
 		return nil, ErrInvalidKey
 	}
@@ -1099,7 +1098,7 @@ func (db *DB) ScanPrefix(prefix []byte) (*DBIterator, error) {
 	// Calculate the upper bound for the prefix using prefixSuccessor
 	upperBound := prefixSuccessor(prefix)
 	r := keys.NewRange(prefix, upperBound)
-	return db.NewIteratorWithBounds(r), nil
+	return db.NewIteratorWithBounds(r, opts), nil
 }
 
 // CompactRange manually triggers compaction for testing and debugging.

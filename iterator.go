@@ -43,13 +43,13 @@ type DBIterator struct {
 }
 
 // NewIterator creates a new database iterator.
-func (db *DB) NewIterator() *DBIterator {
+func (db *DB) NewIterator(opts *ReadOptions) *DBIterator {
 	b := &keys.Range{Start: nil, Limit: nil}
-	return db.NewIteratorWithBounds(b)
+	return db.NewIteratorWithBounds(b, opts)
 }
 
 // NewIteratorWithBounds creates a new database iterator with bounds.
-func (db *DB) NewIteratorWithBounds(bounds *keys.Range) *DBIterator {
+func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIterator {
 	// Enter epoch to protect file access for the lifetime of the iterator
 	epochNum := epoch.EnterEpoch()
 
@@ -63,6 +63,10 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range) *DBIterator {
 
 	if bounds == nil {
 		bounds = &keys.Range{Start: nil, Limit: nil}
+	}
+
+	if opts == nil {
+		opts = DefaultReadOptions()
 	}
 
 	// Create streaming merge iterator for better allocation performance
@@ -96,7 +100,7 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range) *DBIterator {
 			}
 
 			// Add SSTable iterator directly
-			iter := cachedReader.Reader().NewIteratorWithBounds(bounds)
+			iter := cachedReader.Reader().NewIteratorWithBounds(bounds, opts.NoBlockCache)
 			mergeIter.AddIterator(iter) // SSTable levels start from 1
 		}
 	}

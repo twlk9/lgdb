@@ -275,7 +275,7 @@ func TestIteratorConsistencyDuringModification(t *testing.T) {
 	}
 
 	// Create iterator
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Collect initial iterator state

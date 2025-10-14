@@ -62,7 +62,7 @@ func TestSSTableBasicWriteRead(t *testing.T) {
 
 	// Test reading each key-value pair using iterator
 	for _, item := range testData {
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(false)
 
 		// Create a seek key with max sequence number to find the most recent version
 		seekKey := keys.NewEncodedKey([]byte(item.key), keys.MaxSequenceNumber, keys.KindSet)
@@ -93,7 +93,7 @@ func TestSSTableBasicWriteRead(t *testing.T) {
 	}
 
 	// Test reading non-existent key using iterator
-	iter := reader.NewIterator()
+	iter := reader.NewIterator(false)
 	seekKey := keys.NewQueryKey([]byte("nonexistent"))
 	iter.Seek(seekKey)
 
@@ -217,7 +217,7 @@ func TestSSTableMultipleBlocks(t *testing.T) {
 		key := fmt.Sprintf("key%04d", i)
 
 		// Use iterator to find the key
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(false)
 		seekKey := keys.NewQueryKey([]byte(key))
 		iter.Seek(seekKey)
 

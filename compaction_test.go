@@ -1,6 +1,3 @@
-//go:build integration
-// +build integration
-
 package lgdb
 
 import (
@@ -84,7 +81,7 @@ func TestCompactionBasic(t *testing.T) {
 	}
 
 	// Verify all keys are still readable
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		key := fmt.Sprintf("key%06d", i)
 		expectedValue := fmt.Sprintf("value%06d", i)
 
@@ -118,7 +115,7 @@ func TestCompactionWithDeletes(t *testing.T) {
 	defer db.Close()
 
 	// Write initial keys
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		key := fmt.Sprintf("key%06d", i)
 		value := fmt.Sprintf("value%06d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -158,7 +155,7 @@ func TestCompactionWithDeletes(t *testing.T) {
 	}
 
 	// Verify that existing keys are still readable
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := fmt.Sprintf("key%06d", i)
 		expectedValue := fmt.Sprintf("value%06d", i)
 
@@ -218,7 +215,7 @@ func TestCompactionConcurrency(t *testing.T) {
 
 	// Write many keys to trigger multiple flushes and compactions
 	numKeys := 2000
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("key%06d", i)
 		value := fmt.Sprintf("value%06d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -306,7 +303,7 @@ func TestCompactionVersioning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Create an iterator (should hold a reference to the current version)
-	iter := db.NewIterator()
+	iter := db.NewIterator(nil)
 	defer iter.Close()
 
 	// Write more data to trigger compaction
@@ -357,7 +354,7 @@ func TestCompactionVersioning(t *testing.T) {
 	if count < 100 {
 		// Debug: Show which keys are missing
 		expectedKeys := make(map[string]bool)
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			expectedKeys[fmt.Sprintf("key%06d", i)] = true
 		}
 
@@ -376,7 +373,7 @@ func TestCompactionVersioning(t *testing.T) {
 	}
 
 	// Create a new iterator to see the current state
-	newIter := db.NewIterator()
+	newIter := db.NewIterator(nil)
 	defer newIter.Close()
 
 	newIter.SeekToFirst()
@@ -416,7 +413,7 @@ func TestTombstoneEliminationAtBottomLevel(t *testing.T) {
 	defer db.Close()
 
 	// Step 1: Write some data
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := fmt.Sprintf("key%03d", i)
 		value := fmt.Sprintf("value%03d", i)
 		err := db.Put([]byte(key), []byte(value))
@@ -500,7 +497,7 @@ func TestTombstoneEliminationAtBottomLevel(t *testing.T) {
 		}
 
 		reader := cachedReader.Reader()
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(true)
 
 		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 			internalKey := iter.Key()
@@ -550,7 +547,7 @@ func TestCompactionFileCleanup(t *testing.T) {
 	defer db.Close()
 
 	// Write data to create multiple SSTable files
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		key := fmt.Sprintf("key%06d", i)
 		value := fmt.Sprintf("value%06d", i)
 		if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -594,7 +591,7 @@ func TestCompactionFileCleanup(t *testing.T) {
 	}
 
 	// Verify all data is still accessible
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		key := fmt.Sprintf("key%06d", i)
 		expectedValue := fmt.Sprintf("value%06d", i)
 
@@ -767,7 +764,7 @@ func TestCompactionUsesCorrectTargetSize(t *testing.T) {
 	defer db.Close()
 
 	// Add enough data to trigger L0->L1 compaction
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		key := []byte("key" + string(rune('0'+i%10)))
 		value := make([]byte, 200) // 200 byte values
 		for j := range value {
@@ -812,7 +809,7 @@ func TestCompactionUsesCorrectTargetSize(t *testing.T) {
 	// that the TargetFileSize method is being called correctly
 
 	// Verify we can still read all the data
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		key := []byte("key" + string(rune('0'+i%10)))
 		value, err := db.Get(key)
 		if err != nil {
@@ -906,7 +903,7 @@ func TestFileSelectionStrategies(t *testing.T) {
 
 		// Create multiple files with different ages (sequence numbers)
 		// File 1: keys 000-099
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			key := fmt.Sprintf("key%03d", i)
 			value := fmt.Sprintf("value%03d", i)
 			if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -969,7 +966,7 @@ func TestFileSelectionStrategies(t *testing.T) {
 		t.Logf("File selection strategy test completed successfully")
 
 		// Verify all data is still readable
-		for i := 0; i < 300; i++ {
+		for i := range 300 {
 			key := fmt.Sprintf("key%03d", i)
 			expectedValue := fmt.Sprintf("value%03d", i)
 
@@ -1002,7 +999,7 @@ func TestFileSelectionStrategies(t *testing.T) {
 
 		// Create files with different overlap characteristics
 		// File 1: keys 000-050 (low overlap with next level)
-		for i := 0; i < 51; i++ {
+		for i := range 51 {
 			key := fmt.Sprintf("key%03d", i)
 			value := fmt.Sprintf("value%03d", i)
 			if err := db.Put([]byte(key), []byte(value)); err != nil {
@@ -1155,7 +1152,7 @@ func TestLevelSizeLimitsAndCompactionStrategy(t *testing.T) {
 	defer version.MarkForCleanup()
 
 	// Check each level's total size and file count
-	for level := 0; level < 4; level++ {
+	for level := range 4 {
 		files := version.GetFiles(level)
 		totalSize := int64(0)
 		for _, file := range files {
@@ -1197,7 +1194,7 @@ func TestLevelSizeLimitsAndCompactionStrategy(t *testing.T) {
 
 	// Test 4: Verify data integrity after all compactions
 	t.Log("Verifying data integrity...")
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("testkey%06d", i)
 		value, err := db.Get([]byte(key))
 		if err != nil {
@@ -1327,7 +1324,7 @@ func TestTombstoneEarlyDrop(t *testing.T) {
 		}
 
 		reader := cachedReader.Reader()
-		iter := reader.NewIterator()
+		iter := reader.NewIterator(true)
 
 		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 			key := iter.Key()
@@ -1417,7 +1414,7 @@ func TestKeyNotExistsBeyondOutputLevel(t *testing.T) {
 	defer version.MarkForCleanup()
 
 	// Log what's actually in each level for debugging
-	for level := 0; level < 4; level++ {
+	for level := range 4 {
 		files := version.GetFiles(level)
 		if len(files) > 0 {
 			t.Logf("Level %d has %d files:", level, len(files))

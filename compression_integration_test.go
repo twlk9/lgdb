@@ -99,7 +99,7 @@ func TestCompressionIntegration(t *testing.T) {
 			}
 
 			// Test iteration works correctly
-			iter := db.NewIteratorWithBounds(nil)
+			iter := db.NewIteratorWithBounds(nil, nil)
 			defer iter.Close()
 
 			foundKeys := make(map[string]string)
