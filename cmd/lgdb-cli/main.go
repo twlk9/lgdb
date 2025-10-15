@@ -53,6 +53,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+	case "rebuild":
+		if err := rebuildCommand(args); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("lgdb-cli version %s\n", version)
 	case "help":
@@ -76,6 +81,7 @@ Commands:
   compact <db_path>                  Force database compaction
   verify <db_path>                   Verify database integrity
   scan-key <db_path> <key_prefix>    Find which SSTables contain keys with given prefix
+  rebuild <db_path>                  Rebuild manifest from SSTable files (recovery tool)
   version                            Show version information
   help                               Show this help message
 
@@ -85,6 +91,7 @@ Examples:
   lgdb-cli compact /path/to/database
   lgdb-cli verify /path/to/database
   lgdb-cli scan-key /path/to/database "fr\\x00nodeid"
+  lgdb-cli rebuild /path/to/database
 
 `)
 }
@@ -611,4 +618,39 @@ func estimateKeyCount(fileSize uint64) uint64 {
 	// This is just for display purposes
 	avgEntrySize := uint64(50)
 	return fileSize / avgEntrySize
+}
+
+func rebuildCommand(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("rebuild command requires database path")
+	}
+
+	dbPath := args[0]
+
+	// Check if database directory exists
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		return fmt.Errorf("database directory does not exist: %s", dbPath)
+	}
+
+	fmt.Printf("Rebuilding manifest for database: %s\n", dbPath)
+	fmt.Println("WARNING: This will create a new manifest file. Backup your data first!")
+	fmt.Println("All SSTables will be placed in L0 initially.")
+	fmt.Println()
+
+	// Create logger for the rebuild operation
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Call the standalone rebuild function
+	recoveredCount, err := lgdb.RebuildManifestStandalone(dbPath, logger, nil)
+	if err != nil {
+		return fmt.Errorf("failed to rebuild manifest: %v", err)
+	}
+
+	fmt.Printf("\n✓ Successfully rebuilt manifest!\n")
+	fmt.Printf("  Recovered %d SSTable files\n", recoveredCount)
+	fmt.Printf("  All files placed in L0\n")
+	fmt.Printf("  Manifest created successfully\n")
+	fmt.Printf("\nRecommendation: Open the database and run compaction to optimize level structure\n")
+
+	return nil
 }

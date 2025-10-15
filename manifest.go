@@ -635,3 +635,133 @@ func readCURRENT(dir string) (uint64, error) {
 
 	return manifestNum, nil
 }
+
+// RebuildManifestFromSSTables scans all SSTable files in the directory and reconstructs
+// a new manifest from their metadata. This is a recovery mechanism for when the manifest
+// is corrupt or missing. All SSTables are placed in L0 initially.
+//
+// The metadataReader function is a callback that reads metadata from an SSTable file.
+// It should return (smallestKey, largestKey, fileSize, error).
+// NumEntries is not stored in SSTable files, so it will be set to 0 (acceptable per backwards compat).
+//
+// This avoids circular dependencies between the manifest and sstable packages.
+//
+// Returns the number of SSTables recovered.
+func RebuildManifestFromSSTables(dir string, vs *VersionSet, logger interface{ Warn(msg string, args ...any) },
+	metadataReader func(path string, fileNum uint64) (smallestKey, largestKey []byte, fileSize uint64, err error)) (int, error) {
+
+	// Scan for all SSTable files
+	sstFiles, err := filepath.Glob(filepath.Join(dir, "*.sst"))
+	if err != nil {
+		return 0, fmt.Errorf("failed to scan for SSTable files: %w", err)
+	}
+
+	if len(sstFiles) == 0 {
+		return 0, fmt.Errorf("no SSTable files found to rebuild from")
+	}
+
+	// Create a new version to hold recovered files
+	version := NewVersion(vs.numLevels)
+
+	// Track recovery statistics
+	recoveredCount := 0
+	failedCount := 0
+	maxFileNum := uint64(0)
+
+	// Process each SSTable file
+	for _, sstPath := range sstFiles {
+		// Extract file number from filename (e.g., "000123.sst" -> 123)
+		filename := filepath.Base(sstPath)
+		if !strings.HasSuffix(filename, ".sst") {
+			continue
+		}
+
+		fileNumStr := strings.TrimSuffix(filename, ".sst")
+		fileNum, err := strconv.ParseUint(fileNumStr, 10, 64)
+		if err != nil {
+			logger.Warn("skipping file with invalid number", "file", filename, "error", err)
+			failedCount++
+			continue
+		}
+
+		// Track maximum file number
+		if fileNum > maxFileNum {
+			maxFileNum = fileNum
+		}
+
+		// Read metadata using the provided callback
+		smallestKey, largestKey, fileSize, err := metadataReader(sstPath, fileNum)
+		if err != nil {
+			logger.Warn("failed to read SSTable metadata", "file", filename, "error", err)
+			failedCount++
+			continue
+		}
+
+		metadata := &FileMetadata{
+			FileNum:     fileNum,
+			Size:        fileSize,
+			SmallestKey: smallestKey,
+			LargestKey:  largestKey,
+			NumEntries:  0, // Not stored in SSTable files, set to 0 (backwards compatible)
+		}
+
+		// Add to L0 (all recovered files go to L0 initially)
+		version.files[0] = append(version.files[0], metadata)
+		recoveredCount++
+	}
+
+	if recoveredCount == 0 {
+		return 0, fmt.Errorf("failed to recover any SSTable files (%d files failed)", failedCount)
+	}
+
+	// Register all recovered files
+	version.registerVersionFiles(vs.dir)
+
+	// Install the rebuilt version
+	vs.mu.Lock()
+	if vs.current != nil {
+		vs.current.MarkForCleanup()
+	}
+	vs.current = version
+	vs.versions = append(vs.versions, version)
+
+	// Update nextFileNum to be higher than any recovered file
+	if maxFileNum > 0 {
+		vs.nextFileNum = maxFileNum + 1
+	}
+
+	// Create a new manifest file
+	manifestNum := vs.nextVersionNum
+	vs.nextVersionNum++
+
+	// Write the initial version edit with all recovered files
+	writer, err := NewManifestWriter(vs.dir, manifestNum, vs.maxManifestFileSize)
+	if err != nil {
+		vs.mu.Unlock()
+		return 0, fmt.Errorf("failed to create new manifest: %w", err)
+	}
+
+	// Create version edit with all recovered files
+	edit := NewVersionEdit()
+	for _, file := range version.files[0] {
+		edit.AddFile(0, file)
+	}
+
+	// Write the initial state to manifest
+	if err := writer.WriteVersionEdit(edit); err != nil {
+		writer.Close()
+		vs.mu.Unlock()
+		return 0, fmt.Errorf("failed to write initial version edit: %w", err)
+	}
+
+	if err := writer.Sync(); err != nil {
+		writer.Close()
+		vs.mu.Unlock()
+		return 0, fmt.Errorf("failed to sync manifest: %w", err)
+	}
+
+	vs.manifestWriter = writer
+	vs.mu.Unlock()
+
+	return recoveredCount, nil
+}
