@@ -1219,3 +1219,87 @@ func (db *DB) cleanupOrphanedSSTFiles() error {
 
 	return nil
 }
+
+// RebuildManifest scans all SSTable files and rebuilds the manifest from scratch.
+// This is a recovery tool for when the manifest is corrupt or missing entirely.
+// All recovered SSTables are placed in L0 initially. Returns the number of recovered files.
+//
+// This method can be called on a DB instance or used standalone via RebuildManifestStandalone.
+func (db *DB) RebuildManifest() (int, error) {
+	// metadata reader callback that uses the sstable package to read metadata
+	metadataReader := func(path string, fileNum uint64) (smallestKey, largestKey []byte, fileSize uint64, err error) {
+		// Open SSTable reader temporarily to extract metadata
+		reader, err := sstable.NewSSTableReader(path, fileNum, nil, db.logger)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to open SSTable: %w", err)
+		}
+		defer reader.Close()
+
+		// Get file info for size
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to stat file: %w", err)
+		}
+
+		// Extract metadata from reader
+		smallest := reader.SmallestKey()
+		largest := reader.LargestKey()
+
+		// Make copies of the keys since they reference internal buffers
+		smallestCopy := make([]byte, len(smallest))
+		largestCopy := make([]byte, len(largest))
+		copy(smallestCopy, smallest)
+		copy(largestCopy, largest)
+
+		return smallestCopy, largestCopy, uint64(fileInfo.Size()), nil
+	}
+
+	return RebuildManifestFromSSTables(db.path, db.versions, db.logger, metadataReader)
+}
+
+// RebuildManifestStandalone rebuilds a database manifest from SSTable files without opening the database.
+// This is useful for offline recovery tools and CLI utilities.
+// Returns the number of recovered SSTable files.
+func RebuildManifestStandalone(dbPath string, logger *slog.Logger, opts *Options) (int, error) {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	}
+
+	if opts == nil {
+		opts = DefaultOptions()
+		opts.Path = dbPath
+	}
+
+	// Create a temporary version set for the rebuild operation
+	vs := NewVersionSet(opts.MaxLevels, dbPath, opts.MaxManifestFileSize, logger)
+
+	// metadata reader callback
+	metadataReader := func(path string, fileNum uint64) (smallestKey, largestKey []byte, fileSize uint64, err error) {
+		// Open SSTable reader temporarily to extract metadata
+		reader, err := sstable.NewSSTableReader(path, fileNum, nil, logger)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to open SSTable: %w", err)
+		}
+		defer reader.Close()
+
+		// Get file info for size
+		fileInfo, err := os.Stat(path)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("failed to stat file: %w", err)
+		}
+
+		// Extract metadata from reader
+		smallest := reader.SmallestKey()
+		largest := reader.LargestKey()
+
+		// Make copies of the keys
+		smallestCopy := make([]byte, len(smallest))
+		largestCopy := make([]byte, len(largest))
+		copy(smallestCopy, smallest)
+		copy(largestCopy, largest)
+
+		return smallestCopy, largestCopy, uint64(fileInfo.Size()), nil
+	}
+
+	return RebuildManifestFromSSTables(dbPath, vs, logger, metadataReader)
+}
