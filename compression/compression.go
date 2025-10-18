@@ -129,6 +129,74 @@ func S2BetterConfig() Config {
 	}
 }
 
+// TieredCompressionConfig defines compression strategy across LSM levels
+// This allows configuring "fast compression for hot data, strong compression for cold data"
+// without exposing per-level complexity
+type TieredCompressionConfig struct {
+	// TopCompression is used for hot, frequently compacted levels (L0, L1, L2, etc.)
+	// Recommend: fast compression like S2, Snappy, or None
+	TopCompression Config
+
+	// BottomCompression is used for cold, stable levels where most data lives
+	// Recommend: strong compression like Zstd
+	BottomCompression Config
+
+	// TopLevelCount specifies how many levels from the top use TopCompression
+	// Levels 0 to TopLevelCount-1 use TopCompression
+	// Levels TopLevelCount and above use BottomCompression
+	// Example: TopLevelCount=3 means L0,L1,L2 use Top, L3+ use Bottom
+	TopLevelCount int
+}
+
+// GetConfigForLevel returns the appropriate compression config for a given level
+func (tc TieredCompressionConfig) GetConfigForLevel(level int) Config {
+	if level < tc.TopLevelCount {
+		return tc.TopCompression
+	}
+	return tc.BottomCompression
+}
+
+// DefaultTieredConfig returns the recommended tiered compression setup
+// Fast S2 compression on L0-L2, balanced Zstd on L3+
+func DefaultTieredConfig() TieredCompressionConfig {
+	return TieredCompressionConfig{
+		TopCompression:    S2DefaultConfig(),
+		BottomCompression: ZstdBalancedConfig(),
+		TopLevelCount:     3,
+	}
+}
+
+// UniformFastConfig uses fast compression on all levels
+// Good for write-heavy workloads with plenty of disk space
+func UniformFastConfig() TieredCompressionConfig {
+	return TieredCompressionConfig{
+		TopCompression:    S2DefaultConfig(),
+		BottomCompression: S2DefaultConfig(),
+		TopLevelCount:     0, // doesn't matter since they're identical
+	}
+}
+
+// UniformBestConfig uses maximum compression on all levels
+// Good for read-heavy workloads where space is critical
+// WARNING: Much slower writes and higher CPU usage
+func UniformBestConfig() TieredCompressionConfig {
+	return TieredCompressionConfig{
+		TopCompression:    ZstdBestConfig(),
+		BottomCompression: ZstdBestConfig(),
+		TopLevelCount:     0, // doesn't matter since they're identical
+	}
+}
+
+// AggressiveTieredConfig uses no compression on top levels, best compression on bottom
+// Maximizes write speed while achieving excellent space efficiency
+func AggressiveTieredConfig() TieredCompressionConfig {
+	return TieredCompressionConfig{
+		TopCompression:    NoCompressionConfig(),
+		BottomCompression: ZstdBestConfig(),
+		TopLevelCount:     3,
+	}
+}
+
 // Compressor interface defines compression operations
 type Compressor interface {
 	// Compress compresses src into dst and returns the compressed data

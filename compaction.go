@@ -175,11 +175,11 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 
 	// If this was an L0 compaction, signal any writes waiting on L0 backpressure
 	if compaction.level == 0 && cm.flushBP != nil {
-		cm.flushBP.Broadcast()
+		v := cm.versions.GetCurrentVersion()
+		if len(v.GetFiles(0)) < cm.options.L0StopWritesTrigger {
+			cm.flushBP.Broadcast()
+		}
 	}
-
-	// Files are now cleaned up automatically via epoch management
-	// No manual cleanup needed
 
 	return nil
 }
