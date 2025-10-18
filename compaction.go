@@ -35,6 +35,9 @@ type CompactionManager struct {
 	doneChan   chan error    // CompactionManager signals completion
 	closeChan  chan struct{} // For shutdown
 
+	// Backpressure signaling
+	flushBP *sync.Cond // Signal when L0 count decreases (for L0 backpressure)
+
 	// State
 	closed bool
 	mu     sync.Mutex
@@ -45,7 +48,7 @@ type CompactionManager struct {
 }
 
 // NewCompactionManager creates a new compaction manager
-func NewCompactionManager(versions *VersionSet, fileCache *FileCache, path string, options *Options, logger *slog.Logger) *CompactionManager {
+func NewCompactionManager(versions *VersionSet, fileCache *FileCache, path string, options *Options, logger *slog.Logger, flushBP *sync.Cond) *CompactionManager {
 	cm := &CompactionManager{
 		versions:      versions,
 		fileCache:     fileCache,
@@ -55,6 +58,7 @@ func NewCompactionManager(versions *VersionSet, fileCache *FileCache, path strin
 		wakeupChan:    make(chan struct{}, 1), // Buffered to avoid blocking
 		doneChan:      make(chan error, 1),    // Buffered for non-blocking completion signal
 		closeChan:     make(chan struct{}),
+		flushBP:       flushBP,
 		closed:        false,
 		levelMaxBytes: make([]int64, options.MaxLevels),
 	}
@@ -168,6 +172,11 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 
 	// Clean up compaction
 	compaction.Cleanup()
+
+	// If this was an L0 compaction, signal any writes waiting on L0 backpressure
+	if compaction.level == 0 && cm.flushBP != nil {
+		cm.flushBP.Broadcast()
+	}
 
 	// Files are now cleaned up automatically via epoch management
 	// No manual cleanup needed
