@@ -767,9 +767,10 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	sstablePath := filepath.Join(db.path, fmt.Sprintf("%06d.sst", fileNumber))
 
 	// Create SSTable writer
+	// Memtable flushes always go to L0
 	wopts := sstable.SSTableOpts{
 		Path:                 sstablePath,
-		Compression:          db.options.Compression,
+		Compression:          db.options.GetCompressionForLevel(0),
 		BlockSize:            db.options.BlockSize,
 		BlockRestartInterval: db.options.BlockRestartInterval,
 		BlockMinEntries:      db.options.BlockMinEntries,

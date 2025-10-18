@@ -513,7 +513,7 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 		// Check if we need to start a new output file
 		if currentWriter == nil {
 			var err error
-			currentWriter, err = cm.createOutputFile(outputFileNum)
+			currentWriter, err = cm.createOutputFile(outputFileNum, compaction.outputLevel)
 			if err != nil {
 				return nil, err
 			}
@@ -618,11 +618,12 @@ func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, ve
 }
 
 // createOutputFile creates a new output SSTable file.
-func (cm *CompactionManager) createOutputFile(fileNum uint64) (*sstable.SSTableWriter, error) {
+// The level parameter determines which compression config to use for tiered compression.
+func (cm *CompactionManager) createOutputFile(fileNum uint64, level int) (*sstable.SSTableWriter, error) {
 
 	wopts := sstable.SSTableOpts{
 		Path:                 filepath.Join(cm.path, fmt.Sprintf("%06d.sst", fileNum)),
-		Compression:          cm.options.Compression,
+		Compression:          cm.options.GetCompressionForLevel(level),
 		Logger:               cm.logger,
 		BlockSize:            cm.options.BlockSize,
 		BlockRestartInterval: cm.options.BlockRestartInterval,
