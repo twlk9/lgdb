@@ -203,7 +203,7 @@ func Open(opts *Options) (*DB, error) {
 	db.versions = NewVersionSet(opts.MaxLevels, opts.Path, opts.MaxManifestFileSize, logger)
 
 	// Initialize compaction manager with all dependencies
-	db.compactionManager = NewCompactionManager(db.versions, db.fileCache, opts.Path, opts, logger)
+	db.compactionManager = NewCompactionManager(db.versions, db.fileCache, opts.Path, opts, logger, db.flushBP)
 
 	// Initialize atomic fields
 	db.seq.Store(0)
