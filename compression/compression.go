@@ -16,6 +16,10 @@ const (
 	// Zstd uses Zstandard compression algorithm
 	// Better compression ratios than Snappy, slightly slower
 	Zstd
+
+	// S2 uses S2 compression algorithm
+	// Faster than Snappy with better compression ratios
+	S2
 )
 
 // String returns the string representation of the compression type
@@ -27,6 +31,8 @@ func (t Type) String() string {
 		return "snappy"
 	case Zstd:
 		return "zstd"
+	case S2:
+		return "s2"
 	default:
 		return "unknown"
 	}
@@ -40,7 +46,7 @@ type Config struct {
 	// MinReductionPercent is the minimum compression ratio required
 	// to store a block compressed. If compression achieves less than
 	// this percentage reduction, the block is stored uncompressed.
-	// Default: 12.5% (blocks that don't compress by at least 12.5% are stored uncompressed)
+	// Default: 12% (blocks that don't compress by at least 12% are stored uncompressed)
 	MinReductionPercent uint8
 
 	// ZstdLevel specifies the Zstd compression level (only used when Type is Zstd)
@@ -105,6 +111,24 @@ func NoCompressionConfig() Config {
 	}
 }
 
+// S2DefaultConfig returns configuration for S2 compression with default settings
+// S2 is faster than Snappy with better compression ratios
+func S2DefaultConfig() Config {
+	return Config{
+		Type:                S2,
+		MinReductionPercent: 12, // Same threshold as Snappy
+	}
+}
+
+// S2BetterConfig returns configuration for S2 "better" compression mode
+// Trades some speed for improved compression ratio
+func S2BetterConfig() Config {
+	return Config{
+		Type:                S2,
+		MinReductionPercent: 10, // Slightly lower threshold for better mode
+	}
+}
+
 // Compressor interface defines compression operations
 type Compressor interface {
 	// Compress compresses src into dst and returns the compressed data
@@ -127,6 +151,8 @@ func NewCompressor(config Config) (Compressor, error) {
 		return NewSnappyCompressor(config.MinReductionPercent), nil
 	case Zstd:
 		return NewZstdCompressor(config.MinReductionPercent, config.ZstdLevel), nil
+	case S2:
+		return NewS2Compressor(config.MinReductionPercent), nil
 	default:
 		return nil, fmt.Errorf("unknown compression type: %d", config.Type)
 	}
@@ -167,6 +193,7 @@ const (
 	BlockNone   = 0
 	BlockSnappy = 1
 	BlockZstd   = 2
+	BlockS2     = 3
 )
 
 // CompressBlock compresses a block of data using the specified compressor
@@ -200,6 +227,8 @@ func CompressBlock(compressor Compressor, dst, src []byte) ([]byte, uint8, error
 		return compressed, BlockSnappy, nil
 	case Zstd:
 		return compressed, BlockZstd, nil
+	case S2:
+		return compressed, BlockS2, nil
 	default:
 		return compressed, BlockNone, nil
 	}
@@ -225,6 +254,10 @@ func DecompressBlock(dst, src []byte, compressionType uint8) ([]byte, error) {
 	case BlockZstd:
 		// Zstd compression
 		return DecompressZstd(dst, src)
+
+	case BlockS2:
+		// S2 compression
+		return DecompressS2(dst, src)
 
 	default:
 		return nil, fmt.Errorf("unknown compression type: %d", compressionType)
