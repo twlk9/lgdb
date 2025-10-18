@@ -663,3 +663,147 @@ func TestS2CompressBlock(t *testing.T) {
 		t.Errorf("Compressed block should be smaller: got %d, original %d", len(compressed), len(src))
 	}
 }
+
+func TestTieredCompressionLevelSelection(t *testing.T) {
+	tc := DefaultTieredConfig()
+
+	// Verify default config uses S2 for top levels
+	if tc.TopCompression.Type != S2 {
+		t.Errorf("DefaultTieredConfig should use S2 for TopCompression, got %v", tc.TopCompression.Type)
+	}
+
+	// Verify default config uses Zstd for bottom levels
+	if tc.BottomCompression.Type != Zstd {
+		t.Errorf("DefaultTieredConfig should use Zstd for BottomCompression, got %v", tc.BottomCompression.Type)
+	}
+
+	// Verify TopLevelCount is 3
+	if tc.TopLevelCount != 3 {
+		t.Errorf("DefaultTieredConfig should have TopLevelCount=3, got %d", tc.TopLevelCount)
+	}
+
+	// Test top levels (L0, L1, L2)
+	for i := 0; i < 3; i++ {
+		cfg := tc.GetConfigForLevel(i)
+		if cfg.Type != S2 {
+			t.Errorf("Level %d should use S2, got %v", i, cfg.Type)
+		}
+	}
+
+	// Test bottom levels (L3+)
+	for i := 3; i < 7; i++ {
+		cfg := tc.GetConfigForLevel(i)
+		if cfg.Type != Zstd {
+			t.Errorf("Level %d should use Zstd, got %v", i, cfg.Type)
+		}
+	}
+}
+
+func TestUniformFastConfig(t *testing.T) {
+	tc := UniformFastConfig()
+
+	// Verify uses S2 for both top and bottom
+	if tc.TopCompression.Type != S2 {
+		t.Errorf("UniformFastConfig should use S2 for TopCompression, got %v", tc.TopCompression.Type)
+	}
+	if tc.BottomCompression.Type != S2 {
+		t.Errorf("UniformFastConfig should use S2 for BottomCompression, got %v", tc.BottomCompression.Type)
+	}
+
+	// All levels should use same compression
+	topCfg := tc.GetConfigForLevel(0)
+	bottomCfg := tc.GetConfigForLevel(10)
+
+	if topCfg.Type != bottomCfg.Type {
+		t.Errorf("Uniform config should use same type at all levels: top=%v, bottom=%v", topCfg.Type, bottomCfg.Type)
+	}
+	if topCfg.Type != S2 {
+		t.Errorf("UniformFastConfig should use S2 at all levels, got %v", topCfg.Type)
+	}
+}
+
+func TestUniformBestConfig(t *testing.T) {
+	tc := UniformBestConfig()
+
+	// Verify uses Zstd for both top and bottom
+	if tc.TopCompression.Type != Zstd {
+		t.Errorf("UniformBestConfig should use Zstd for TopCompression, got %v", tc.TopCompression.Type)
+	}
+	if tc.BottomCompression.Type != Zstd {
+		t.Errorf("UniformBestConfig should use Zstd for BottomCompression, got %v", tc.BottomCompression.Type)
+	}
+
+	// All levels should use Zstd
+	topCfg := tc.GetConfigForLevel(0)
+	bottomCfg := tc.GetConfigForLevel(10)
+
+	if topCfg.Type != bottomCfg.Type {
+		t.Errorf("Uniform config should use same type at all levels: top=%v, bottom=%v", topCfg.Type, bottomCfg.Type)
+	}
+	if topCfg.Type != Zstd {
+		t.Errorf("UniformBestConfig should use Zstd at all levels, got %v", topCfg.Type)
+	}
+}
+
+func TestAggressiveTieredConfig(t *testing.T) {
+	tc := AggressiveTieredConfig()
+
+	// Verify uses None for top levels
+	if tc.TopCompression.Type != None {
+		t.Errorf("AggressiveTieredConfig should use None for TopCompression, got %v", tc.TopCompression.Type)
+	}
+
+	// Verify uses ZstdBest for bottom levels
+	if tc.BottomCompression.Type != Zstd {
+		t.Errorf("AggressiveTieredConfig should use Zstd for BottomCompression, got %v", tc.BottomCompression.Type)
+	}
+
+	// Test top levels should have no compression
+	for i := 0; i < 3; i++ {
+		cfg := tc.GetConfigForLevel(i)
+		if cfg.Type != None {
+			t.Errorf("Level %d should use None, got %v", i, cfg.Type)
+		}
+	}
+
+	// Test bottom levels should have Zstd compression
+	for i := 3; i < 7; i++ {
+		cfg := tc.GetConfigForLevel(i)
+		if cfg.Type != Zstd {
+			t.Errorf("Level %d should use Zstd, got %v", i, cfg.Type)
+		}
+	}
+}
+
+func TestTieredCompressionBoundaryConditions(t *testing.T) {
+	tests := []struct {
+		name          string
+		topLevelCount int
+		testLevel     int
+		expectTop     bool
+	}{
+		{"Level 0 with boundary 1", 1, 0, true},
+		{"Level 1 with boundary 1", 1, 1, false},
+		{"Level 0 with boundary 0", 0, 0, false},
+		{"Level 5 with boundary 5", 5, 4, true},
+		{"Level 5 with boundary 5", 5, 5, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := TieredCompressionConfig{
+				TopCompression:    S2DefaultConfig(),
+				BottomCompression: ZstdBalancedConfig(),
+				TopLevelCount:     tt.topLevelCount,
+			}
+
+			cfg := tc.GetConfigForLevel(tt.testLevel)
+			isTop := cfg.Type == S2
+
+			if isTop != tt.expectTop {
+				t.Errorf("Level %d with TopLevelCount=%d: expected top=%v, got top=%v",
+					tt.testLevel, tt.topLevelCount, tt.expectTop, isTop)
+			}
+		})
+	}
+}
