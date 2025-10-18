@@ -155,7 +155,13 @@ type Options struct {
 
 	// Compression configuration for SSTable blocks
 	// Controls how blocks are compressed before writing to disk
+	// DEPRECATED: Use TieredCompression instead for per-level compression control
 	Compression compression.Config
+
+	// TieredCompression allows different compression strategies for hot vs cold data
+	// If nil, falls back to Compression field for all levels (backward compatibility)
+	// Recommended: Use compression.DefaultTieredConfig() for optimal balance
+	TieredCompression *compression.TieredCompressionConfig
 
 	// File selection strategy for compaction
 	// Controls how files are chosen for compaction within a level
@@ -348,6 +354,16 @@ func (o *Options) TargetFileSize(level int) int64 {
 		size *= o.LevelFileSizeMultiplier
 	}
 	return int64(size)
+}
+
+// GetCompressionForLevel returns the appropriate compression config for a given level.
+// If TieredCompression is configured, uses per-level compression.
+// Otherwise, falls back to the single Compression config for all levels (backward compatibility).
+func (o *Options) GetCompressionForLevel(level int) compression.Config {
+	if o.TieredCompression != nil {
+		return o.TieredCompression.GetConfigForLevel(level)
+	}
+	return o.Compression
 }
 
 // Helpful Logger functions

@@ -455,3 +455,222 @@ func TestZstdLevelPerformance(t *testing.T) {
 		})
 	}
 }
+
+func TestTieredCompressionIntegration(t *testing.T) {
+	// Test tiered compression with actual compaction through multiple levels
+	tmpDir := t.TempDir()
+
+	// Create database with tiered compression
+	options := DefaultOptions()
+	options.Path = tmpDir
+	tieredConfig := compression.DefaultTieredConfig()
+	options.TieredCompression = &tieredConfig
+	options.WriteBufferSize = 1 * KiB // Small buffer to force frequent flushes
+	options.L0CompactionTrigger = 2   // Trigger compaction quickly
+	options.MaxMemtables = 2
+
+	db, err := Open(options)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	// Add enough data to trigger compactions through multiple levels
+	numKeys := 200
+	for i := range numKeys {
+		key := []byte(fmt.Sprintf("key%06d", i))
+		// Use compressible data
+		value := bytes.Repeat([]byte(fmt.Sprintf("value%06d", i)+" "), 10)
+
+		err := db.Put(key, value)
+		if err != nil {
+			t.Fatalf("Failed to put key %d: %v", i, err)
+		}
+	}
+
+	// Verify all data is accessible
+	for i := range numKeys {
+		key := []byte(fmt.Sprintf("key%06d", i))
+		expectedValue := bytes.Repeat([]byte(fmt.Sprintf("value%06d", i)+" "), 10)
+
+		value, err := db.Get(key)
+		if err != nil {
+			t.Fatalf("Failed to get key %d: %v", i, err)
+		}
+		if value == nil {
+			t.Fatalf("Key %d not found", i)
+		}
+		if !bytes.Equal(value, expectedValue) {
+			t.Fatalf("Value mismatch for key %d", i)
+		}
+	}
+
+	// Verify that data has been compacted to multiple levels
+	db.mu.RLock()
+	version := db.versions.GetCurrentVersion()
+	l0Count := len(version.GetFiles(0))
+	l1Count := len(version.GetFiles(1))
+	l2Count := len(version.GetFiles(2))
+	l3Count := len(version.GetFiles(3))
+	db.mu.RUnlock()
+
+	t.Logf("L0 files: %d", l0Count)
+	t.Logf("L1 files: %d", l1Count)
+	t.Logf("L2 files: %d", l2Count)
+	t.Logf("L3 files: %d", l3Count)
+
+	if l0Count == 0 && l1Count == 0 {
+		t.Log("Warning: No L0 or L1 files found - data might have been compacted to deeper levels")
+	}
+
+	t.Log("Successfully tested tiered compression with compaction")
+}
+
+func TestTieredCompressionConfigs(t *testing.T) {
+	// Test different tiered compression presets
+	testCases := []struct {
+		name   string
+		config compression.TieredCompressionConfig
+	}{
+		{
+			name:   "DefaultTiered",
+			config: compression.DefaultTieredConfig(),
+		},
+		{
+			name:   "UniformFast",
+			config: compression.UniformFastConfig(),
+		},
+		{
+			name:   "UniformBest",
+			config: compression.UniformBestConfig(),
+		},
+		{
+			name:   "AggressiveTiered",
+			config: compression.AggressiveTieredConfig(),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpDir := t.TempDir()
+
+			// Create database with tiered compression
+			options := DefaultOptions()
+			options.Path = tmpDir
+			options.TieredCompression = &tc.config
+			options.WriteBufferSize = 2 * KiB
+
+			db, err := Open(options)
+			if err != nil {
+				t.Fatalf("Failed to open database: %v", err)
+			}
+			defer db.Close()
+
+			// Add test data
+			numKeys := 50
+			for i := range numKeys {
+				key := []byte(fmt.Sprintf("key%03d", i))
+				value := bytes.Repeat([]byte("testdata"), 20)
+
+				err := db.Put(key, value)
+				if err != nil {
+					t.Fatalf("Failed to put key %d: %v", i, err)
+				}
+			}
+
+			// Verify all data is accessible
+			for i := range numKeys {
+				key := []byte(fmt.Sprintf("key%03d", i))
+				value, err := db.Get(key)
+				if err != nil {
+					t.Fatalf("Failed to get key %d: %v", i, err)
+				}
+				if value == nil {
+					t.Fatalf("Key %d not found", i)
+				}
+			}
+
+			t.Logf("Successfully tested %s tiered compression", tc.name)
+		})
+	}
+}
+
+func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
+	// Test that databases created with legacy Compression field still work
+	// and that TieredCompression can be added later
+	tmpDir := t.TempDir()
+
+	// Phase 1: Create database with legacy compression field
+	options1 := DefaultOptions()
+	options1.Path = tmpDir
+	options1.Compression = compression.SnappyConfig()
+	options1.TieredCompression = nil // Explicitly nil
+
+	db1, err := Open(options1)
+	if err != nil {
+		t.Fatalf("Failed to open database with legacy compression: %v", err)
+	}
+
+	// Add some data
+	for i := range 20 {
+		key := []byte(fmt.Sprintf("key%d", i))
+		value := []byte(fmt.Sprintf("value%d", i))
+		err := db1.Put(key, value)
+		if err != nil {
+			t.Fatalf("Failed to put key %d: %v", i, err)
+		}
+	}
+
+	db1.Close()
+
+	// Phase 2: Reopen with TieredCompression
+	options2 := DefaultOptions()
+	options2.Path = tmpDir
+	tieredConfig := compression.DefaultTieredConfig()
+	options2.TieredCompression = &tieredConfig
+
+	db2, err := Open(options2)
+	if err != nil {
+		t.Fatalf("Failed to reopen database with tiered compression: %v", err)
+	}
+	defer db2.Close()
+
+	// Verify old data is still accessible
+	for i := range 20 {
+		key := []byte(fmt.Sprintf("key%d", i))
+		expectedValue := []byte(fmt.Sprintf("value%d", i))
+
+		value, err := db2.Get(key)
+		if err != nil {
+			t.Fatalf("Failed to get old key %d: %v", i, err)
+		}
+		if !bytes.Equal(value, expectedValue) {
+			t.Fatalf("Value mismatch for old key %d", i)
+		}
+	}
+
+	// Add new data (should use tiered compression)
+	for i := 20; i < 40; i++ {
+		key := []byte(fmt.Sprintf("key%d", i))
+		value := bytes.Repeat([]byte(fmt.Sprintf("newvalue%d", i)), 5)
+		err := db2.Put(key, value)
+		if err != nil {
+			t.Fatalf("Failed to put new key %d: %v", i, err)
+		}
+	}
+
+	// Verify all data is accessible
+	for i := range 40 {
+		key := []byte(fmt.Sprintf("key%d", i))
+		value, err := db2.Get(key)
+		if err != nil {
+			t.Fatalf("Failed to get key %d: %v", i, err)
+		}
+		if value == nil {
+			t.Fatalf("Key %d not found", i)
+		}
+	}
+
+	t.Log("Successfully tested backward compatibility")
+}
