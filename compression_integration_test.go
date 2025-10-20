@@ -463,8 +463,7 @@ func TestTieredCompressionIntegration(t *testing.T) {
 	// Create database with tiered compression
 	options := DefaultOptions()
 	options.Path = tmpDir
-	tieredConfig := compression.DefaultTieredConfig()
-	options.TieredCompression = &tieredConfig
+	options.TieredCompression = compression.DefaultTieredConfig()
 	options.WriteBufferSize = 1 * KiB // Small buffer to force frequent flushes
 	options.L0CompactionTrigger = 2   // Trigger compaction quickly
 	options.MaxMemtables = 2
@@ -530,7 +529,7 @@ func TestTieredCompressionConfigs(t *testing.T) {
 	// Test different tiered compression presets
 	testCases := []struct {
 		name   string
-		config compression.TieredCompressionConfig
+		config *compression.TieredCompressionConfig
 	}{
 		{
 			name:   "DefaultTiered",
@@ -558,7 +557,7 @@ func TestTieredCompressionConfigs(t *testing.T) {
 			// Create database with tiered compression
 			options := DefaultOptions()
 			options.Path = tmpDir
-			options.TieredCompression = &tc.config
+			options.TieredCompression = tc.config
 			options.WriteBufferSize = 2 * KiB
 
 			db, err := Open(options)
@@ -627,8 +626,7 @@ func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
 	// Phase 2: Reopen with TieredCompression
 	options2 := DefaultOptions()
 	options2.Path = tmpDir
-	tieredConfig := compression.DefaultTieredConfig()
-	options2.TieredCompression = &tieredConfig
+	options2.TieredCompression = compression.DefaultTieredConfig()
 
 	db2, err := Open(options2)
 	if err != nil {
