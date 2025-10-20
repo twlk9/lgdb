@@ -158,8 +158,8 @@ func (tc TieredCompressionConfig) GetConfigForLevel(level int) Config {
 
 // DefaultTieredConfig returns the recommended tiered compression setup
 // Fast S2 compression on L0-L2, balanced Zstd on L3+
-func DefaultTieredConfig() TieredCompressionConfig {
-	return TieredCompressionConfig{
+func DefaultTieredConfig() *TieredCompressionConfig {
+	return &TieredCompressionConfig{
 		TopCompression:    S2DefaultConfig(),
 		BottomCompression: ZstdBalancedConfig(),
 		TopLevelCount:     3,
@@ -168,8 +168,8 @@ func DefaultTieredConfig() TieredCompressionConfig {
 
 // UniformFastConfig uses fast compression on all levels
 // Good for write-heavy workloads with plenty of disk space
-func UniformFastConfig() TieredCompressionConfig {
-	return TieredCompressionConfig{
+func UniformFastConfig() *TieredCompressionConfig {
+	return &TieredCompressionConfig{
 		TopCompression:    S2DefaultConfig(),
 		BottomCompression: S2DefaultConfig(),
 		TopLevelCount:     0, // doesn't matter since they're identical
@@ -179,8 +179,8 @@ func UniformFastConfig() TieredCompressionConfig {
 // UniformBestConfig uses maximum compression on all levels
 // Good for read-heavy workloads where space is critical
 // WARNING: Much slower writes and higher CPU usage
-func UniformBestConfig() TieredCompressionConfig {
-	return TieredCompressionConfig{
+func UniformBestConfig() *TieredCompressionConfig {
+	return &TieredCompressionConfig{
 		TopCompression:    ZstdBestConfig(),
 		BottomCompression: ZstdBestConfig(),
 		TopLevelCount:     0, // doesn't matter since they're identical
@@ -189,8 +189,8 @@ func UniformBestConfig() TieredCompressionConfig {
 
 // AggressiveTieredConfig uses no compression on top levels, best compression on bottom
 // Maximizes write speed while achieving excellent space efficiency
-func AggressiveTieredConfig() TieredCompressionConfig {
-	return TieredCompressionConfig{
+func AggressiveTieredConfig() *TieredCompressionConfig {
+	return &TieredCompressionConfig{
 		TopCompression:    NoCompressionConfig(),
 		BottomCompression: ZstdBestConfig(),
 		TopLevelCount:     3,
