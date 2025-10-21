@@ -470,8 +470,8 @@ func TestZstdDecompressBlock(t *testing.T) {
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 
-	if config.Type != Snappy {
-		t.Errorf("Default compression type should be Snappy, got %v", config.Type)
+	if config.Type != S2 {
+		t.Errorf("Default compression type should be S2, got %v", config.Type)
 	}
 
 	if config.MinReductionPercent != 12 {

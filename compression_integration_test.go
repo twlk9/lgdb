@@ -10,34 +10,46 @@ import (
 )
 
 func TestCompressionIntegration(t *testing.T) {
-	// Test with different compression configurations
+	// Test with different tiered compression configurations
 	testCases := []struct {
 		name   string
-		config compression.Config
+		config *compression.TieredCompressionConfig
 	}{
 		{
-			name:   "NoCompression",
-			config: compression.NoCompressionConfig(),
+			name: "UniformNoCompression",
+			config: &compression.TieredCompressionConfig{
+				TopCompression:    compression.NoCompressionConfig(),
+				BottomCompression: compression.NoCompressionConfig(),
+				TopLevelCount:     0, // All levels use no compression
+			},
 		},
 		{
-			name:   "SnappyCompression",
-			config: compression.SnappyConfig(),
+			name: "UniformSnappy",
+			config: &compression.TieredCompressionConfig{
+				TopCompression:    compression.SnappyConfig(),
+				BottomCompression: compression.SnappyConfig(),
+				TopLevelCount:     0, // All levels use Snappy
+			},
 		},
 		{
-			name:   "SnappyHighThreshold",
-			config: compression.Config{Type: compression.Snappy, MinReductionPercent: 50},
+			name: "UniformS2",
+			config: compression.UniformFastConfig(), // Fast S2 on all levels
 		},
 		{
-			name:   "ZstdFast",
-			config: compression.ZstdFastConfig(),
+			name: "UniformZstdFast",
+			config: &compression.TieredCompressionConfig{
+				TopCompression:    compression.ZstdFastConfig(),
+				BottomCompression: compression.ZstdFastConfig(),
+				TopLevelCount:     0, // All levels use Zstd Fast
+			},
 		},
 		{
-			name:   "ZstdBalanced",
-			config: compression.ZstdBalancedConfig(),
+			name: "UniformZstdBest",
+			config: compression.UniformBestConfig(), // Best Zstd on all levels
 		},
 		{
-			name:   "ZstdBest",
-			config: compression.ZstdBestConfig(),
+			name:   "DefaultTiered",
+			config: compression.DefaultTieredConfig(), // S2 on L0-L2, Zstd on L3+
 		},
 	}
 
@@ -47,10 +59,10 @@ func TestCompressionIntegration(t *testing.T) {
 			// Create temporary directory
 			tmpDir := t.TempDir()
 
-			// Create database with specific compression config
+			// Create database with specific tiered compression config
 			options := DefaultOptions()
 			options.Path = tmpDir
-			options.Compression = tc.config
+			options.TieredCompression = tc.config
 
 			db, err := Open(options)
 			if err != nil {
@@ -132,10 +144,15 @@ func TestCompressionWithCompaction(t *testing.T) {
 	tmpDir := t.TempDir()
 	defer os.RemoveAll(tmpDir)
 
-	// Create database with Snappy compression
+	// Create database with Snappy compression (uniform across all levels)
 	options := DefaultOptions()
 	options.Path = tmpDir
-	options.Compression = compression.Config{Type: compression.Snappy, MinReductionPercent: 5}
+	snappyConfig := compression.Config{Type: compression.Snappy, MinReductionPercent: 5}
+	options.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    snappyConfig,
+		BottomCompression: snappyConfig,
+		TopLevelCount:     0, // All levels use Snappy
+	}
 	options.WriteBufferSize = 1024 // Small buffer to force frequent flushes
 
 	db, err := Open(options)
@@ -183,10 +200,14 @@ func TestMixedCompressionTypes(t *testing.T) {
 	tmpDir := t.TempDir()
 	defer os.RemoveAll(tmpDir)
 
-	// Phase 1: Create database with no compression
+	// Phase 1: Create database with no compression (uniform across all levels)
 	options1 := DefaultOptions()
 	options1.Path = tmpDir
-	options1.Compression = compression.Config{Type: compression.None}
+	options1.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    compression.NoCompressionConfig(),
+		BottomCompression: compression.NoCompressionConfig(),
+		TopLevelCount:     0, // All levels use no compression
+	}
 
 	db1, err := Open(options1)
 	if err != nil {
@@ -207,10 +228,15 @@ func TestMixedCompressionTypes(t *testing.T) {
 
 	db1.Close()
 
-	// Phase 2: Reopen with Snappy compression
+	// Phase 2: Reopen with Snappy compression (uniform across all levels)
 	options2 := DefaultOptions()
 	options2.Path = tmpDir
-	options2.Compression = compression.Config{Type: compression.Snappy, MinReductionPercent: 10}
+	snappyConfig := compression.Config{Type: compression.Snappy, MinReductionPercent: 10}
+	options2.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    snappyConfig,
+		BottomCompression: snappyConfig,
+		TopLevelCount:     0, // All levels use Snappy
+	}
 
 	db2, err := Open(options2)
 	if err != nil {
@@ -284,13 +310,29 @@ func TestCompressionComparison(t *testing.T) {
 
 	compressionConfigs := []struct {
 		name   string
-		config compression.Config
+		config *compression.TieredCompressionConfig
 	}{
-		{"NoCompression", compression.NoCompressionConfig()},
-		{"Snappy", compression.SnappyConfig()},
-		{"ZstdFast", compression.ZstdFastConfig()},
-		{"ZstdBalanced", compression.ZstdBalancedConfig()},
-		{"ZstdBest", compression.ZstdBestConfig()},
+		{"NoCompression", &compression.TieredCompressionConfig{
+			TopCompression:    compression.NoCompressionConfig(),
+			BottomCompression: compression.NoCompressionConfig(),
+			TopLevelCount:     0,
+		}},
+		{"Snappy", &compression.TieredCompressionConfig{
+			TopCompression:    compression.SnappyConfig(),
+			BottomCompression: compression.SnappyConfig(),
+			TopLevelCount:     0,
+		}},
+		{"ZstdFast", &compression.TieredCompressionConfig{
+			TopCompression:    compression.ZstdFastConfig(),
+			BottomCompression: compression.ZstdFastConfig(),
+			TopLevelCount:     0,
+		}},
+		{"ZstdBalanced", &compression.TieredCompressionConfig{
+			TopCompression:    compression.ZstdBalancedConfig(),
+			BottomCompression: compression.ZstdBalancedConfig(),
+			TopLevelCount:     0,
+		}},
+		{"ZstdBest", compression.UniformBestConfig()},
 	}
 
 	results := make(map[string]struct {
@@ -300,11 +342,11 @@ func TestCompressionComparison(t *testing.T) {
 
 	for _, cc := range compressionConfigs {
 		t.Run(cc.name, func(t *testing.T) {
-			// Create database with specific compression
+			// Create database with specific tiered compression
 			subDir := tmpDir + "/" + cc.name
 			options := DefaultOptions()
 			options.Path = subDir
-			options.Compression = cc.config
+			options.TieredCompression = cc.config
 
 			db, err := Open(options)
 			if err != nil {
@@ -338,7 +380,7 @@ func TestCompressionComparison(t *testing.T) {
 				compressed bool
 			}{
 				dbSize:     dbSize,
-				compressed: cc.config.Type != compression.None,
+				compressed: cc.config.TopCompression.Type != compression.None,
 			}
 
 			t.Logf("%s: Database size: %d bytes", cc.name, dbSize)
@@ -596,19 +638,21 @@ func TestTieredCompressionConfigs(t *testing.T) {
 }
 
 func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
-	// Test that databases created with legacy Compression field still work
-	// and that TieredCompression can be added later
+	// Test that databases can switch between different compression configurations
 	tmpDir := t.TempDir()
 
-	// Phase 1: Create database with legacy compression field
+	// Phase 1: Create database with uniform Snappy compression
 	options1 := DefaultOptions()
 	options1.Path = tmpDir
-	options1.Compression = compression.SnappyConfig()
-	options1.TieredCompression = nil // Explicitly nil
+	options1.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    compression.SnappyConfig(),
+		BottomCompression: compression.SnappyConfig(),
+		TopLevelCount:     0, // All levels use Snappy
+	}
 
 	db1, err := Open(options1)
 	if err != nil {
-		t.Fatalf("Failed to open database with legacy compression: %v", err)
+		t.Fatalf("Failed to open database with Snappy compression: %v", err)
 	}
 
 	// Add some data

@@ -271,8 +271,12 @@ func compactCommand(args []string) error {
 	// Open database
 	opts := lgdb.DefaultOptions()
 	opts.Path = dbPath
-	opts.Compression = compression.ZstdBalancedConfig()
-	// opts.Compression = compression.SnappyConfig()
+	// Use balanced Zstd compression on all levels for inspection
+	opts.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    compression.ZstdBalancedConfig(),
+		BottomCompression: compression.ZstdBalancedConfig(),
+		TopLevelCount:     0, // All levels use Zstd
+	}
 	opts.BlockSize = 32 * lgdb.KiB
 	opts.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	fmt.Printf("L0CompactionTrigger: %d\n", opts.L0CompactionTrigger)
