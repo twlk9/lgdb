@@ -369,6 +369,11 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 				return nil, err
 			}
 
+			// Validate keys are not empty - a file should always have a key range
+			if len(smallestKey) == 0 || len(largestKey) == 0 {
+				return nil, fmt.Errorf("manifest corruption: file %d has empty keys (smallestKeyLen=%d, largestKeyLen=%d)", fileNum, smallestKeyLen, largestKeyLen)
+			}
+
 			// Create file metadata (NumEntries = 0 for old format)
 			file := &FileMetadata{
 				FileNum:     fileNum,
@@ -424,6 +429,11 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 			var numEntries uint64
 			if err := binary.Read(buf, binary.LittleEndian, &numEntries); err != nil {
 				return nil, err
+			}
+
+			// Validate keys are not empty - a file should always have a key range
+			if len(smallestKey) == 0 || len(largestKey) == 0 {
+				return nil, fmt.Errorf("manifest corruption: file %d has empty keys (smallestKeyLen=%d, largestKeyLen=%d)", fileNum, smallestKeyLen, largestKeyLen)
 			}
 
 			// Create file metadata

@@ -297,6 +297,11 @@ func (cm *CompactionManager) findOverlappingFiles(version *Version, targetLevel 
 		return nil
 	}
 
+	// Guard against empty input files
+	if len(inputFiles) == 0 {
+		return nil
+	}
+
 	targetFiles := version.GetFiles(targetLevel)
 	if len(targetFiles) == 0 {
 		return nil
@@ -311,6 +316,11 @@ func (cm *CompactionManager) findOverlappingFiles(version *Version, targetLevel 
 		if largestKey == nil || file.LargestKey.Compare(largestKey) > 0 {
 			largestKey = file.LargestKey
 		}
+	}
+
+	// Guard against nil keys (defensive check)
+	if smallestKey == nil || largestKey == nil {
+		return nil
 	}
 
 	// Find overlapping files in target level
@@ -328,6 +338,12 @@ func (cm *CompactionManager) findOverlappingFiles(version *Version, targetLevel 
 func (cm *CompactionManager) keyRangesOverlap(start1, end1, start2, end2 keys.EncodedKey) bool {
 	// Range1: [start1, end1], Range2: [start2, end2]
 	// They overlap if: start1 <= end2 && start2 <= end1
+
+	// Defensive nil checks - should not happen with proper callers but guards against race conditions
+	if start1 == nil || end1 == nil || start2 == nil || end2 == nil {
+		return false
+	}
+
 	return start1.Compare(end2) <= 0 && start2.Compare(end1) <= 0
 }
 
