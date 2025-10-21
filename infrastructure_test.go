@@ -110,7 +110,12 @@ func TestConcurrentCleanup(t *testing.T) {
 	opts.WriteBufferSize = 1024
 	opts.L0CompactionTrigger = 2
 	// opts.Logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})) // Enable focused logging to track data flow
-	opts.Compression = compression.NoCompressionConfig()
+	// Use no compression on all levels for testing
+	opts.TieredCompression = &compression.TieredCompressionConfig{
+		TopCompression:    compression.NoCompressionConfig(),
+		BottomCompression: compression.NoCompressionConfig(),
+		TopLevelCount:     0, // All levels use no compression
+	}
 
 	db, err := Open(opts)
 	if err != nil {

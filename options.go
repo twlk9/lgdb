@@ -153,14 +153,19 @@ type Options struct {
 	// Following Pebble's approach for better write latency predictability.
 	WALBytesPerSync int
 
-	// Compression configuration for SSTable blocks
-	// Controls how blocks are compressed before writing to disk
-	// DEPRECATED: Use TieredCompression instead for per-level compression control
-	Compression compression.Config
-
-	// TieredCompression allows different compression strategies for hot vs cold data
-	// If nil, falls back to Compression field for all levels (backward compatibility)
-	// Recommended: Use compression.DefaultTieredConfig() for optimal balance
+	// TieredCompression defines per-level compression strategies.
+	// Different levels can use different compression algorithms and settings.
+	//
+	// TopLevelCount controls how many levels from the top use TopCompression:
+	// - Levels 0 to TopLevelCount-1 use TopCompression (hot data, frequently compacted)
+	// - Levels TopLevelCount and above use BottomCompression (cold data, stable)
+	// - Set TopLevelCount=0 for uniform compression across all levels
+	//
+	// Common configurations:
+	// - DefaultTieredConfig(): Fast S2 on L0-L2, balanced Zstd on L3+ (recommended)
+	// - UniformFastConfig(): Fast S2 on all levels (write-heavy workloads)
+	// - UniformBestConfig(): Best Zstd on all levels (read-heavy/space-critical)
+	// - AggressiveTieredConfig(): No compression on L0-L2, best Zstd on L3+
 	TieredCompression *compression.TieredCompressionConfig
 
 	// File selection strategy for compaction
@@ -197,7 +202,7 @@ func DefaultOptions() *Options {
 		ReadOnly:                false,
 		DisableWAL:              false,
 		WALBytesPerSync:         0, // Disabled by default
-		Compression:             compression.DefaultConfig(),
+		TieredCompression:       compression.DefaultTieredConfig(),
 		SelectionStrategy:       MinOverlap, // Default to write-optimized strategy
 		Logger:                  DefaultLogger(),
 	}
@@ -357,13 +362,13 @@ func (o *Options) TargetFileSize(level int) int64 {
 }
 
 // GetCompressionForLevel returns the appropriate compression config for a given level.
-// If TieredCompression is configured, uses per-level compression.
-// Otherwise, falls back to the single Compression config for all levels (backward compatibility).
+// Uses TieredCompression configuration to determine which compression strategy to apply.
 func (o *Options) GetCompressionForLevel(level int) compression.Config {
 	if o.TieredCompression != nil {
 		return o.TieredCompression.GetConfigForLevel(level)
 	}
-	return o.Compression
+	// Fallback: should not happen with proper initialization
+	return compression.S2DefaultConfig()
 }
 
 // Helpful Logger functions

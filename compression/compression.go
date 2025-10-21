@@ -56,11 +56,13 @@ type Config struct {
 }
 
 // DefaultConfig returns the default compression configuration
+// DEPRECATED: Use DefaultTieredConfig() instead for per-level compression control.
+// This function is kept for backward compatibility only.
 func DefaultConfig() Config {
 	return Config{
-		Type:                Snappy,      // Default to Snappy like LevelDB
-		MinReductionPercent: 12,          // 12.5% minimum reduction
-		ZstdLevel:           ZstdDefault, // Default Zstd level
+		Type:                S2,           // Default to S2: faster than Snappy with better compression ratios
+		MinReductionPercent: 12,          // 12% minimum reduction
+		ZstdLevel:           ZstdDefault, // Default Zstd level (unused with S2, kept for compatibility)
 	}
 }
 
@@ -156,8 +158,9 @@ func (tc TieredCompressionConfig) GetConfigForLevel(level int) Config {
 	return tc.BottomCompression
 }
 
-// DefaultTieredConfig returns the recommended tiered compression setup
-// Fast S2 compression on L0-L2, balanced Zstd on L3+
+// DefaultTieredConfig returns the recommended tiered compression setup.
+// Fast S2 compression on L0-L2 (hot data), balanced Zstd on L3+ (cold data).
+// This balances write performance (lower levels) with space efficiency (higher levels).
 func DefaultTieredConfig() *TieredCompressionConfig {
 	return &TieredCompressionConfig{
 		TopCompression:    S2DefaultConfig(),
@@ -166,24 +169,26 @@ func DefaultTieredConfig() *TieredCompressionConfig {
 	}
 }
 
-// UniformFastConfig uses fast compression on all levels
-// Good for write-heavy workloads with plenty of disk space
+// UniformFastConfig uses fast S2 compression on all levels.
+// Good for write-heavy workloads with plenty of disk space.
+// When TopLevelCount=0, all levels use TopCompression (they're identical).
 func UniformFastConfig() *TieredCompressionConfig {
 	return &TieredCompressionConfig{
 		TopCompression:    S2DefaultConfig(),
-		BottomCompression: S2DefaultConfig(),
-		TopLevelCount:     0, // doesn't matter since they're identical
+		BottomCompression: S2DefaultConfig(), // Not used when TopLevelCount=0
+		TopLevelCount:     0,                  // All levels use TopCompression
 	}
 }
 
-// UniformBestConfig uses maximum compression on all levels
-// Good for read-heavy workloads where space is critical
-// WARNING: Much slower writes and higher CPU usage
+// UniformBestConfig uses maximum Zstd compression on all levels.
+// Good for read-heavy workloads where space is critical.
+// WARNING: Much slower writes and higher CPU usage.
+// When TopLevelCount=0, all levels use TopCompression (they're identical).
 func UniformBestConfig() *TieredCompressionConfig {
 	return &TieredCompressionConfig{
 		TopCompression:    ZstdBestConfig(),
-		BottomCompression: ZstdBestConfig(),
-		TopLevelCount:     0, // doesn't matter since they're identical
+		BottomCompression: ZstdBestConfig(), // Not used when TopLevelCount=0
+		TopLevelCount:     0,                 // All levels use TopCompression
 	}
 }
 
