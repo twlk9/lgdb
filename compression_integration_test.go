@@ -32,7 +32,7 @@ func TestCompressionIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "UniformS2",
+			name:   "UniformS2",
 			config: compression.UniformFastConfig(), // Fast S2 on all levels
 		},
 		{
@@ -44,7 +44,7 @@ func TestCompressionIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "UniformZstdBest",
+			name:   "UniformZstdBest",
 			config: compression.UniformBestConfig(), // Best Zstd on all levels
 		},
 		{
@@ -519,7 +519,7 @@ func TestTieredCompressionIntegration(t *testing.T) {
 	// Add enough data to trigger compactions through multiple levels
 	numKeys := 200
 	for i := range numKeys {
-		key := []byte(fmt.Sprintf("key%06d", i))
+		key := fmt.Appendf(nil, "key%06d", i)
 		// Use compressible data
 		value := bytes.Repeat([]byte(fmt.Sprintf("value%06d", i)+" "), 10)
 
@@ -531,7 +531,7 @@ func TestTieredCompressionIntegration(t *testing.T) {
 
 	// Verify all data is accessible
 	for i := range numKeys {
-		key := []byte(fmt.Sprintf("key%06d", i))
+		key := fmt.Appendf(nil, "key%06d", i)
 		expectedValue := bytes.Repeat([]byte(fmt.Sprintf("value%06d", i)+" "), 10)
 
 		value, err := db.Get(key)
@@ -611,7 +611,7 @@ func TestTieredCompressionConfigs(t *testing.T) {
 			// Add test data
 			numKeys := 50
 			for i := range numKeys {
-				key := []byte(fmt.Sprintf("key%03d", i))
+				key := fmt.Appendf(nil, "key%03d", i)
 				value := bytes.Repeat([]byte("testdata"), 20)
 
 				err := db.Put(key, value)
@@ -622,7 +622,7 @@ func TestTieredCompressionConfigs(t *testing.T) {
 
 			// Verify all data is accessible
 			for i := range numKeys {
-				key := []byte(fmt.Sprintf("key%03d", i))
+				key := fmt.Appendf(nil, "key%03d", i)
 				value, err := db.Get(key)
 				if err != nil {
 					t.Fatalf("Failed to get key %d: %v", i, err)
@@ -657,8 +657,8 @@ func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
 
 	// Add some data
 	for i := range 20 {
-		key := []byte(fmt.Sprintf("key%d", i))
-		value := []byte(fmt.Sprintf("value%d", i))
+		key := fmt.Appendf(nil, "key%d", i)
+		value := fmt.Appendf(nil, "value%d", i)
 		err := db1.Put(key, value)
 		if err != nil {
 			t.Fatalf("Failed to put key %d: %v", i, err)
@@ -680,8 +680,8 @@ func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
 
 	// Verify old data is still accessible
 	for i := range 20 {
-		key := []byte(fmt.Sprintf("key%d", i))
-		expectedValue := []byte(fmt.Sprintf("value%d", i))
+		key := fmt.Appendf(nil, "key%d", i)
+		expectedValue := fmt.Appendf(nil, "value%d", i)
 
 		value, err := db2.Get(key)
 		if err != nil {
@@ -694,8 +694,8 @@ func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
 
 	// Add new data (should use tiered compression)
 	for i := 20; i < 40; i++ {
-		key := []byte(fmt.Sprintf("key%d", i))
-		value := bytes.Repeat([]byte(fmt.Sprintf("newvalue%d", i)), 5)
+		key := fmt.Appendf(nil, "key%d", i)
+		value := bytes.Repeat(fmt.Appendf(nil, "newvalue%d", i), 5)
 		err := db2.Put(key, value)
 		if err != nil {
 			t.Fatalf("Failed to put new key %d: %v", i, err)
@@ -704,7 +704,7 @@ func TestBackwardCompatibilityWithLegacyCompression(t *testing.T) {
 
 	// Verify all data is accessible
 	for i := range 40 {
-		key := []byte(fmt.Sprintf("key%d", i))
+		key := fmt.Appendf(nil, "key%d", i)
 		value, err := db2.Get(key)
 		if err != nil {
 			t.Fatalf("Failed to get key %d: %v", i, err)

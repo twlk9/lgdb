@@ -613,8 +613,10 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 			bdb := newBenchmarkDB(b, bm.opts)
 			defer bdb.close()
 
-			bdb.generateKeys(b.N, 16)
-			bdb.generateValues(b.N, 100)
+			// Use fixed size for pre-generated keys/values
+			count := 10000
+			bdb.generateKeys(count, 16)
+			bdb.generateValues(count, 100)
 
 			writeOpts := &WriteOptions{Sync: false}
 			if bm.name == "SyncEveryWrite" {
@@ -623,8 +625,8 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 
 			b.ResetTimer()
 			for i := 0; b.Loop(); i++ {
-				key := bdb.keys[i]
-				value := bdb.values[i]
+				key := bdb.keys[i%count]
+				value := bdb.values[i%count]
 				if err := bdb.db.PutWithOptions(key, value, writeOpts); err != nil {
 					b.Fatal(err)
 				}

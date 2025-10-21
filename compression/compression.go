@@ -60,7 +60,7 @@ type Config struct {
 // This function is kept for backward compatibility only.
 func DefaultConfig() Config {
 	return Config{
-		Type:                S2,           // Default to S2: faster than Snappy with better compression ratios
+		Type:                S2,          // Default to S2: faster than Snappy with better compression ratios
 		MinReductionPercent: 12,          // 12% minimum reduction
 		ZstdLevel:           ZstdDefault, // Default Zstd level (unused with S2, kept for compatibility)
 	}
@@ -176,7 +176,7 @@ func UniformFastConfig() *TieredCompressionConfig {
 	return &TieredCompressionConfig{
 		TopCompression:    S2DefaultConfig(),
 		BottomCompression: S2DefaultConfig(), // Not used when TopLevelCount=0
-		TopLevelCount:     0,                  // All levels use TopCompression
+		TopLevelCount:     0,                 // All levels use TopCompression
 	}
 }
 
@@ -188,7 +188,7 @@ func UniformBestConfig() *TieredCompressionConfig {
 	return &TieredCompressionConfig{
 		TopCompression:    ZstdBestConfig(),
 		BottomCompression: ZstdBestConfig(), // Not used when TopLevelCount=0
-		TopLevelCount:     0,                 // All levels use TopCompression
+		TopLevelCount:     0,                // All levels use TopCompression
 	}
 }
 

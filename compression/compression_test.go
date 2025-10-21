@@ -683,7 +683,7 @@ func TestTieredCompressionLevelSelection(t *testing.T) {
 	}
 
 	// Test top levels (L0, L1, L2)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		cfg := tc.GetConfigForLevel(i)
 		if cfg.Type != S2 {
 			t.Errorf("Level %d should use S2, got %v", i, cfg.Type)
@@ -759,7 +759,7 @@ func TestAggressiveTieredConfig(t *testing.T) {
 	}
 
 	// Test top levels should have no compression
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		cfg := tc.GetConfigForLevel(i)
 		if cfg.Type != None {
 			t.Errorf("Level %d should use None, got %v", i, cfg.Type)

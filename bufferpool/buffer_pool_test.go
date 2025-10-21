@@ -103,14 +103,26 @@ func BenchmarkBufferPoolLarge(b *testing.B) {
 	}
 }
 
+var (
+	// Package-level variables to prevent compiler optimizations
+	benchResult []byte
+	benchSum    int
+)
+
 func BenchmarkDirectAllocationSmall(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
-		_ = make([]byte, 1024)
+		buf := make([]byte, 1024)
+		benchResult = buf
+		benchSum += len(buf)
 	}
 }
 
 func BenchmarkDirectAllocationLarge(b *testing.B) {
+	b.ReportAllocs()
 	for b.Loop() {
-		_ = make([]byte, 16384)
+		buf := make([]byte, 16384)
+		benchResult = buf
+		benchSum += len(buf)
 	}
 }
