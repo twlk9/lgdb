@@ -98,19 +98,20 @@ func BenchmarkPutAllocations(b *testing.B) {
 	}
 	defer db.Close()
 
-	// Pre-generate test data
-	keys := make([][]byte, b.N)
-	values := make([][]byte, b.N)
-	for i := 0; b.Loop(); i++ {
+	// Pre-generate test data - use a reasonable fixed size
+	count := 10000
+	keys := make([][]byte, count)
+	values := make([][]byte, count)
+	for i := range count {
 		keys[i] = fmt.Appendf(nil, "key%016d", i)
 		values[i] = fmt.Appendf(nil, "value%0100d", i) // 100-byte values
 	}
 
 	b.ReportAllocs() // Enable allocation reporting
-	// Reset timer after setup
+	b.ResetTimer()   // Reset timer after setup
 
 	for i := 0; b.Loop(); i++ {
-		err := db.Put(keys[i], values[i])
+		err := db.Put(keys[i%count], values[i%count])
 		if err != nil {
 			b.Fatal(err)
 		}
