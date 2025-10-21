@@ -1,19 +1,21 @@
 # lgdb - Level Go Database
 
-An embedded key-value store. Thread-safe, minimal dependencies.
+An embedded key-value store. Thread-safe, minimal dependencies (just
+compression at this point).
 
-Started as a learning project but ended up actually being
-useful. Built around keeping things simple while not being completely
-terrible at performance.
+Started as a learning project but ended up actually being useful. Did
+my best to keep things simple and understandable while maintaining
+performance.
 
 Doesn't have bloom filters since my main use case is range queries on
-time series data. No range deletion support yet either - tried a few
-approaches but haven't landed on something I'm happy with.
+time series data. No range deletion support yet either. I tried a few
+approaches but haven't landed on something I'm happy with yet. Will
+keep trying.
 
-One thing it does have is tiered compression. Run hot data (L0-L2)
-through fast S2 compression and let the cold data (L3+) get hit with
-Zstd for space efficiency. Or just pick one compression method for
-everything if you prefer.
+It does have is tiered compression. Run hot data (L0-L2) through fast
+S2 compression and let the cold data (L3+) get hit with Zstd for space
+efficiency. Or just pick one compression method for everything if you
+prefer.
 
 ## Quick Start
 

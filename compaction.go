@@ -262,13 +262,13 @@ func (cm *CompactionManager) pickLevelCompaction(version *Version) *Compaction {
 		return nil // No level needs compaction
 	}
 
-	// Pick one file from the level (simple round-robin or oldest-first)
+	// Pick files from the level, using overlap-aware expansion
 	levelFiles := version.GetFiles(bestLevel)
 	if len(levelFiles) == 0 {
 		return nil
 	}
 
-	selectedFiles := cm.selectCompactionFilesForLevel(levelFiles, bestLevel)
+	selectedFiles := cm.selectFiles(version, levelFiles, bestLevel)
 
 	// Find overlapping files in next level
 	overlappingFiles := cm.findOverlappingFiles(version, bestLevel+1, selectedFiles)
@@ -377,25 +377,15 @@ func (cm *CompactionManager) calculateLevelScore(level int, version *Version) fl
 	return float64(totalSize) / float64(cm.levelMaxBytes[level])
 }
 
-// selectCompactionFilesForLevel selects files for compaction at a specific level
-func (cm *CompactionManager) selectCompactionFilesForLevel(files []*FileMetadata, level int) []*FileMetadata {
+// selectFiles selects files for compaction at a specific level, using
+// overlap-aware expansion to reduce write amplification.
+func (cm *CompactionManager) selectFiles(version *Version, files []*FileMetadata, level int) []*FileMetadata {
 	if len(files) == 0 {
 		return nil
 	}
 
 	// Don't compact a level with 1 file
 	if len(files) == 1 {
-		return nil
-	}
-
-	// Use size-aware selection to avoid small file trickling
-	return cm.selectFilesForTargetSize(files, level)
-}
-
-// selectFilesForTargetSize selects files to get closer to target output file size,
-// preventing small file trickling by choosing enough input to create properly sized output.
-func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, level int) []*FileMetadata {
-	if len(files) < 2 {
 		return nil
 	}
 
@@ -408,13 +398,9 @@ func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, lev
 	})
 
 	// Calculate target input size based on the output level's target file size
-	// We want enough input data to create properly sized output files
 	outputLevel := level + 1
 	targetOutputFileSize := cm.options.TargetFileSize(outputLevel)
-
-	// Aim for input that will produce files close to target output size
-	// Account for compaction efficiency (overlap removal, compression)
-	targetInputSize := int64(float64(targetOutputFileSize) * 1.2) // 20% overhead for efficiency
+	targetInputSize := int64(float64(targetOutputFileSize) * 1.2) // 20% overhead
 
 	// Don't go below a reasonable minimum
 	minInputSize := int64(4096)
@@ -422,7 +408,7 @@ func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, lev
 		targetInputSize = minInputSize
 	}
 
-	// Select contiguous files starting from oldest until we reach reasonable input size
+	// Select initial set of files targeting the input size
 	selected := []*FileMetadata{}
 	totalSize := int64(0)
 
@@ -441,9 +427,14 @@ func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, lev
 		}
 	}
 
-	// Always return at least 2 files if we have them
+	// Always have at least 2 files
 	if len(selected) < 2 && len(sorted) >= 2 {
 		selected = sorted[:2]
+	}
+
+	// Now apply overlap-aware expansion: if overlaps are too high, select more files
+	if cm.options.CompactionOverlapThreshold > 0 {
+		selected = cm.expandSelection(version, selected, sorted, level)
 	}
 
 	cm.logger.Info("SELECTED_COMPACTION_FILES",
@@ -452,6 +443,103 @@ func (cm *CompactionManager) selectFilesForTargetSize(files []*FileMetadata, lev
 		"totalInputSize", totalSize,
 		"targetInputSize", targetInputSize,
 		"targetOutputFileSize", targetOutputFileSize)
+
+	return selected
+}
+
+// expandSelection checks if selected files have excessive overlaps in
+// the next level. If so, it expands selection to include more files
+// from the current level, spreading the overlap cost and reducing
+// write amplification.
+func (cm *CompactionManager) expandSelection(version *Version, selected, allSorted []*FileMetadata, level int) []*FileMetadata {
+	// Find overlapping files in next level
+	overlapping := cm.findOverlappingFiles(version, level+1, selected)
+	if len(overlapping) == 0 {
+		return selected
+	}
+
+	// Calculate overlap ratio
+	overlapSize := int64(0)
+	for _, f := range overlapping {
+		overlapSize += int64(f.Size)
+	}
+
+	selectedSize := int64(0)
+	for _, f := range selected {
+		selectedSize += int64(f.Size)
+	}
+
+	if selectedSize == 0 {
+		return selected
+	}
+
+	overlapRatio := float64(overlapSize) / float64(selectedSize)
+
+	cm.logger.Debug("Overlap check",
+		"level", level,
+		"selectedFiles", len(selected),
+		"selectedSize", selectedSize,
+		"overlappingFiles", len(overlapping),
+		"overlapSize", overlapSize,
+		"overlapRatio", overlapRatio,
+		"threshold", cm.options.CompactionOverlapThreshold)
+
+	// If overlap ratio exceeds threshold, try to expand selection
+	if overlapRatio > cm.options.CompactionOverlapThreshold {
+		cm.logger.Info("High overlap detected - expanding selection",
+			"level", level,
+			"overlapRatio", overlapRatio,
+			"threshold", cm.options.CompactionOverlapThreshold)
+
+		// Expand files until we reach target overlap ratio or hit limits
+		expanded := make([]*FileMetadata, len(selected))
+		copy(expanded, selected)
+		expandedSize := selectedSize
+
+		// Try adding more files from the sorted list
+		for _, file := range allSorted {
+			// Skip if already in expanded set
+			alreadyIncluded := false
+			for _, e := range expanded {
+				if e.FileNum == file.FileNum {
+					alreadyIncluded = true
+					break
+				}
+			}
+			if alreadyIncluded {
+				continue
+			}
+
+			// Add the file and recalculate
+			expanded = append(expanded, file)
+			expandedSize += int64(file.Size)
+
+			// Recalculate overlaps with expanded selection
+			newOverlapping := cm.findOverlappingFiles(version, level+1, expanded)
+			newOverlapSize := int64(0)
+			for _, f := range newOverlapping {
+				newOverlapSize += int64(f.Size)
+			}
+			newRatio := float64(newOverlapSize) / float64(expandedSize)
+
+			cm.logger.Debug("Expansion step",
+				"level", level,
+				"expandedFiles", len(expanded),
+				"newRatio", newRatio,
+				"targetRatio", cm.options.CompactionTargetOverlapRatio)
+
+			// Stop if we've achieved target ratio or hit limits
+			if newRatio <= cm.options.CompactionTargetOverlapRatio ||
+				len(expanded) >= cm.options.CompactionMaxExpansionFiles {
+				return expanded
+			}
+		}
+
+		// Return what we have if we've exhausted the file list
+		if len(expanded) > len(selected) {
+			return expanded
+		}
+	}
 
 	return selected
 }

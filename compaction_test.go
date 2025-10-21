@@ -893,7 +893,6 @@ func TestFileSelectionStrategies(t *testing.T) {
 
 		testOpts := *opts
 		testOpts.Path = testDir
-		testOpts.SelectionStrategy = OldestSeq
 
 		db, err := Open(&testOpts)
 		if err != nil {
@@ -989,7 +988,6 @@ func TestFileSelectionStrategies(t *testing.T) {
 
 		testOpts := *opts
 		testOpts.Path = testDir
-		testOpts.SelectionStrategy = MinOverlap
 
 		db, err := Open(&testOpts)
 		if err != nil {

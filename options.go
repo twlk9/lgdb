@@ -8,22 +8,6 @@ import (
 	"github.com/twlk9/lgdb/compression"
 )
 
-// SelectionStrategy determines how files are selected for compaction
-type SelectionStrategy int
-
-const (
-	// FileSelectionOldestSmallestSeqFirst selects the file with the oldest smallest sequence number.
-	// This strategy prioritizes freeing up space by compacting older data first.
-	// Best for read-heavy workloads where data locality is important.
-	OldestSeq SelectionStrategy = iota
-
-	// FileSelectionMinOverlappingRatio selects the file with the smallest overlap ratio with the next level.
-	// This strategy minimizes write amplification by choosing files that overlap least with next level.
-	// Based on RocksDB's kMinOverlappingRatio heuristic, following Pebble's implementation.
-	// Best for write-heavy workloads where minimizing write amplification is critical.
-	MinOverlap
-)
-
 const (
 	KiB = 1024
 	MiB = KiB * 1024
@@ -32,21 +16,24 @@ const (
 
 // Default values following LevelDB conventions
 var (
-	DefaultWriteBufferSize               = 4 * MiB
-	DefaultMaxMemtables                  = 2
-	DefaultLevelSizeMultiplier           = 10.0
-	DefaultLevelFileSizeMultiplier       = 2.0 // Files grow 2x per level (L0->L1->L2->...)
-	DefaultMaxLevels                     = 7
-	DefaultL0CompactionTrigger           = 4
-	DefaultL0StopWritesTrigger           = 12
-	DefaultMaxOpenFiles                  = 1000 // Soft limit on file descriptors (used to calculate file cache size)
-	DefaultBlockSize                     = 4 * KiB
-	DefaultBlockCacheSize          int64 = 8 * MiB
-	DefaultBlockRestartInterval          = 16
-	DefaultBlockMinEntries               = 4
-	DefaultMaxManifestFileSize     int64 = 256 * MiB
-	DefaultWALSyncInterval               = 500 * time.Millisecond
-	DefaultWALMinSyncInterval            = 500 * time.Microsecond
+	DefaultWriteBufferSize                    = 4 * MiB
+	DefaultMaxMemtables                       = 2
+	DefaultLevelSizeMultiplier                = 10.0
+	DefaultLevelFileSizeMultiplier            = 2.0 // Files grow 2x per level (L0->L1->L2->...)
+	DefaultMaxLevels                          = 7
+	DefaultL0CompactionTrigger                = 4
+	DefaultL0StopWritesTrigger                = 12
+	DefaultMaxOpenFiles                       = 1000 // Soft limit on file descriptors (used to calculate file cache size)
+	DefaultBlockSize                          = 4 * KiB
+	DefaultBlockCacheSize               int64 = 8 * MiB
+	DefaultBlockRestartInterval               = 16
+	DefaultBlockMinEntries                    = 4
+	DefaultMaxManifestFileSize          int64 = 256 * MiB
+	DefaultWALSyncInterval                    = 500 * time.Millisecond
+	DefaultWALMinSyncInterval                 = 500 * time.Microsecond
+	DefaultCompactionOverlapThreshold         = 4.0 // Expand selection if overlaps > 4x input size
+	DefaultCompactionMaxExpansionFiles        = 20  // Expand up to 20 files
+	DefaultCompactionTargetOverlapRatio       = 2.0 // After expansion, aim for <= 2x overlap ratio
 
 	// File descriptor management constants (following Pebble's approach)
 	NumReservedFiles = 10 // Reserve file descriptors for WAL, manifest, temp files, etc.
@@ -168,9 +155,23 @@ type Options struct {
 	// - AggressiveTieredConfig(): No compression on L0-L2, best Zstd on L3+
 	TieredCompression *compression.TieredCompressionConfig
 
-	// File selection strategy for compaction
-	// Controls how files are chosen for compaction within a level
-	SelectionStrategy SelectionStrategy
+	// CompactionOverlapThreshold controls when we expand file selection to reduce overlap.
+	// If overlapping files in the next level are > this ratio of selected input files,
+	// we expand selection to avoid massive write amplification.
+	// Default: 4.0 means "expand if overlaps are > 4x the input size"
+	// Set to 0 to disable overlap-aware expansion (use oldest strategy only).
+	CompactionOverlapThreshold float64
+
+	// CompactionMaxExpansionFiles is the maximum number of files to include when expanding
+	// selection due to high overlap. Prevents runaway expansion in pathological cases.
+	// Default: 20 files
+	CompactionMaxExpansionFiles int
+
+	// CompactionTargetOverlapRatio is the desired overlap ratio we aim for after expansion.
+	// When expanding due to high overlap, we keep adding files until the overlap ratio
+	// drops to this level or we hit expansion limits.
+	// Default: 2.0 means we want overlaps to be at most 2x the input size
+	CompactionTargetOverlapRatio float64
 
 	// Structured logger
 	Logger *slog.Logger
@@ -181,30 +182,32 @@ type Options struct {
 // These are battle-tested values that work well for most use cases.
 func DefaultOptions() *Options {
 	opts := &Options{
-		WriteBufferSize:         DefaultWriteBufferSize,
-		MaxMemtables:            DefaultMaxMemtables,
-		LevelSizeMultiplier:     DefaultLevelSizeMultiplier,
-		LevelFileSizeMultiplier: DefaultLevelFileSizeMultiplier,
-		MaxLevels:               DefaultMaxLevels,
-		L0CompactionTrigger:     DefaultL0CompactionTrigger,
-		L0StopWritesTrigger:     DefaultL0StopWritesTrigger,
-		MaxOpenFiles:            DefaultMaxOpenFiles,
-		BlockSize:               DefaultBlockSize,
-		BlockCacheSize:          DefaultBlockCacheSize,
-		BlockRestartInterval:    DefaultBlockRestartInterval,
-		BlockMinEntries:         DefaultBlockMinEntries,
-		MaxManifestFileSize:     DefaultMaxManifestFileSize,
-		CreateIfMissing:         true,
-		ErrorIfExists:           false,
-		Sync:                    true, // Change to true for safety by default
-		WALSyncInterval:         DefaultWALSyncInterval,
-		WALMinSyncInterval:      DefaultWALMinSyncInterval,
-		ReadOnly:                false,
-		DisableWAL:              false,
-		WALBytesPerSync:         0, // Disabled by default
-		TieredCompression:       compression.DefaultTieredConfig(),
-		SelectionStrategy:       MinOverlap, // Default to write-optimized strategy
-		Logger:                  DefaultLogger(),
+		WriteBufferSize:              DefaultWriteBufferSize,
+		MaxMemtables:                 DefaultMaxMemtables,
+		LevelSizeMultiplier:          DefaultLevelSizeMultiplier,
+		LevelFileSizeMultiplier:      DefaultLevelFileSizeMultiplier,
+		MaxLevels:                    DefaultMaxLevels,
+		L0CompactionTrigger:          DefaultL0CompactionTrigger,
+		L0StopWritesTrigger:          DefaultL0StopWritesTrigger,
+		MaxOpenFiles:                 DefaultMaxOpenFiles,
+		BlockSize:                    DefaultBlockSize,
+		BlockCacheSize:               DefaultBlockCacheSize,
+		BlockRestartInterval:         DefaultBlockRestartInterval,
+		BlockMinEntries:              DefaultBlockMinEntries,
+		MaxManifestFileSize:          DefaultMaxManifestFileSize,
+		CreateIfMissing:              true,
+		ErrorIfExists:                false,
+		Sync:                         true, // Change to true for safety by default
+		WALSyncInterval:              DefaultWALSyncInterval,
+		WALMinSyncInterval:           DefaultWALMinSyncInterval,
+		ReadOnly:                     false,
+		DisableWAL:                   false,
+		WALBytesPerSync:              0, // Disabled by default
+		TieredCompression:            compression.DefaultTieredConfig(),
+		CompactionOverlapThreshold:   DefaultCompactionOverlapThreshold,
+		CompactionMaxExpansionFiles:  DefaultCompactionMaxExpansionFiles,
+		CompactionTargetOverlapRatio: DefaultCompactionTargetOverlapRatio,
+		Logger:                       DefaultLogger(),
 	}
 
 	// File sizes are now calculated dynamically based on WriteBufferSize and LevelFileSizeMultiplier
