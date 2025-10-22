@@ -12,8 +12,8 @@ time series data. No range deletion support yet either. I tried a few
 approaches but haven't landed on something I'm happy with yet. Will
 keep trying.
 
-It does have is tiered compression. Run hot data (L0-L2) through fast
-S2 compression and let the cold data (L3+) get hit with Zstd for space
+It does have tiered compression. Run hot data (L0-L2) through fast S2
+compression and let the cold data (L3+) get hit with Zstd for space
 efficiency. Or just pick one compression method for everything if you
 prefer.
 
@@ -78,6 +78,7 @@ func main() {
 		fmt.Printf("%s\n", rangeIter.Key())
 	}
 
+	// Iterate over a prefix
 	prefixIter, err := db.ScanPrefix([]byte("user:"), nil)
 	if err != nil {
 		log.Fatal(err)
