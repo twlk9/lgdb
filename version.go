@@ -93,6 +93,28 @@ func (v *Version) registerVersionFiles(dir string) {
 	}
 }
 
+// registerManifestFile registers a manifest file with the epoch manager
+// This ensures the manifest file is kept alive until no versions reference it
+func registerManifestFile(dir string, manifestNum uint64) {
+	currentEpoch := epoch.EnterEpoch()
+	defer epoch.ExitEpoch(currentEpoch)
+
+	manifestResourceID := fmt.Sprintf("manifest_%d", manifestNum)
+	if !epoch.ResourceExists(manifestResourceID) {
+		manifestPath := filepath.Join(dir, fmt.Sprintf("%06d.manifest", manifestNum))
+		epoch.RegisterResource(manifestResourceID, currentEpoch, func() error {
+			// Manifest cleanup function: delete the actual file
+			return os.Remove(manifestPath)
+		})
+	}
+}
+
+// markManifestForCleanup marks a manifest file for cleanup via the epoch system
+func markManifestForCleanup(manifestNum uint64) {
+	manifestResourceID := fmt.Sprintf("manifest_%d", manifestNum)
+	epoch.MarkResourceForCleanup(manifestResourceID)
+}
+
 // MarkForCleanup marks this version for cleanup via epoch manager
 // Called when this version is no longer the current version
 func (v *Version) MarkForCleanup() {
@@ -229,6 +251,8 @@ func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
 			return err
 		}
 		vs.manifestWriter = writer
+		// Register the initial manifest file with epoch system
+		registerManifestFile(vs.dir, vs.nextVersionNum)
 	}
 
 	// Write to manifest file
@@ -263,10 +287,17 @@ func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
 
 // rotateManifest creates a new manifest file with a complete snapshot of the current state
 func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
+	// Save old manifest number before closing
+	oldManifestNum := vs.manifestWriter.GetFileNum()
+
 	// Close current manifest writer
 	if err := vs.manifestWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close current manifest: %w", err)
 	}
+
+	// Mark old manifest file for cleanup via epoch system
+	markManifestForCleanup(oldManifestNum)
+	vs.logger.Debug("marked old manifest for cleanup", "manifest_num", oldManifestNum)
 
 	// Create new manifest file with incremented version number
 	vs.nextVersionNum++
@@ -274,6 +305,9 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 	if err != nil {
 		return fmt.Errorf("failed to create new manifest: %w", err)
 	}
+
+	// Register new manifest file with epoch system
+	registerManifestFile(vs.dir, vs.nextVersionNum)
 
 	// Write complete snapshot of current version to new manifest
 	snapshotEdit := &VersionEdit{
@@ -303,7 +337,7 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 	// Update manifest writer
 	vs.manifestWriter = newWriter
 
-	vs.logger.Info("manifest rotation completed", "new_file_num", vs.nextVersionNum)
+	vs.logger.Info("manifest rotation completed", "old_file_num", oldManifestNum, "new_file_num", vs.nextVersionNum)
 	return nil
 }
 

@@ -594,6 +594,9 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 
 	vs.mu.Unlock()
 
+	// Register recovered manifest file with epoch system
+	registerManifestFile(vs.dir, manifestNum)
+
 	return nil
 }
 
@@ -772,6 +775,9 @@ func RebuildManifestFromSSTables(dir string, vs *VersionSet, logger interface{ W
 
 	vs.manifestWriter = writer
 	vs.mu.Unlock()
+
+	// Register new manifest file with epoch system
+	registerManifestFile(vs.dir, manifestNum)
 
 	return recoveredCount, nil
 }
