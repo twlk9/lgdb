@@ -622,6 +622,10 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 
 	vs.mu.Unlock()
 
+	// Register recovered manifest and range delete files with epoch system
+	registerManifestFile(vs.dir, manifestNum)
+	registerRangeDeleteFile(vs.dir, manifestNum)
+
 	return nil
 }
 
@@ -800,6 +804,10 @@ func RebuildManifestFromSSTables(dir string, vs *VersionSet, logger interface{ W
 
 	vs.manifestWriter = writer
 	vs.mu.Unlock()
+
+	// Register new manifest and range delete files with epoch system
+	registerManifestFile(vs.dir, manifestNum)
+	registerRangeDeleteFile(vs.dir, manifestNum)
 
 	return recoveredCount, nil
 }
