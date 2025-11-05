@@ -97,6 +97,50 @@ func (v *Version) registerVersionFiles(dir string) {
 	}
 }
 
+// registerManifestFile registers a manifest file with the epoch manager
+// This ensures the manifest file is kept alive until no versions reference it
+func registerManifestFile(dir string, manifestNum uint64) {
+	currentEpoch := epoch.EnterEpoch()
+	defer epoch.ExitEpoch(currentEpoch)
+
+	manifestResourceID := fmt.Sprintf("manifest_%d", manifestNum)
+	if !epoch.ResourceExists(manifestResourceID) {
+		manifestPath := filepath.Join(dir, fmt.Sprintf("%06d.manifest", manifestNum))
+		epoch.RegisterResource(manifestResourceID, currentEpoch, func() error {
+			// Manifest cleanup function: delete the actual file
+			return os.Remove(manifestPath)
+		})
+	}
+}
+
+// markManifestForCleanup marks a manifest file for cleanup via the epoch system
+func markManifestForCleanup(manifestNum uint64) {
+	manifestResourceID := fmt.Sprintf("manifest_%d", manifestNum)
+	epoch.MarkResourceForCleanup(manifestResourceID)
+}
+
+// registerRangeDeleteFile registers a range delete file with the epoch manager
+// This ensures the range delete file is kept alive until no versions reference it
+func registerRangeDeleteFile(dir string, rangeDeleteNum uint64) {
+	currentEpoch := epoch.EnterEpoch()
+	defer epoch.ExitEpoch(currentEpoch)
+
+	rangeDeleteResourceID := fmt.Sprintf("rangedel_%d", rangeDeleteNum)
+	if !epoch.ResourceExists(rangeDeleteResourceID) {
+		rangeDeletePath := filepath.Join(dir, fmt.Sprintf("%06d.rangedel", rangeDeleteNum))
+		epoch.RegisterResource(rangeDeleteResourceID, currentEpoch, func() error {
+			// Range delete file cleanup function: delete the actual file
+			return os.Remove(rangeDeletePath)
+		})
+	}
+}
+
+// markRangeDeleteFileForCleanup marks a range delete file for cleanup via the epoch system
+func markRangeDeleteFileForCleanup(rangeDeleteNum uint64) {
+	rangeDeleteResourceID := fmt.Sprintf("rangedel_%d", rangeDeleteNum)
+	epoch.MarkResourceForCleanup(rangeDeleteResourceID)
+}
+
 // MarkForCleanup marks this version for cleanup via epoch manager
 // Called when this version is no longer the current version
 func (v *Version) MarkForCleanup() {
@@ -289,6 +333,8 @@ func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDelete
 			return err
 		}
 		vs.manifestWriter = writer
+		// Register the initial manifest file with epoch system
+		registerManifestFile(vs.dir, vs.nextVersionNum)
 	}
 
 	// Initialize range delete writer if needed (paired with manifest)
@@ -298,6 +344,8 @@ func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDelete
 			return err
 		}
 		vs.rangeDeleteWriter = writer
+		// Register the initial range delete file with epoch system
+		registerRangeDeleteFile(vs.dir, vs.manifestWriter.GetFileNum())
 	}
 
 	// Write to manifest file
@@ -344,6 +392,9 @@ func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDelete
 
 // rotateManifest creates a new manifest file with a complete snapshot of the current state
 func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
+	// Save old manifest/rangedel numbers before closing
+	oldManifestNum := vs.manifestWriter.GetFileNum()
+
 	// Close current manifest writer
 	if err := vs.manifestWriter.Close(); err != nil {
 		return fmt.Errorf("failed to close current manifest: %w", err)
@@ -355,6 +406,11 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 			return fmt.Errorf("failed to close current range delete writer: %w", err)
 		}
 	}
+
+	// Mark old manifest and range delete files for cleanup via epoch system
+	markManifestForCleanup(oldManifestNum)
+	markRangeDeleteFileForCleanup(oldManifestNum)
+	vs.logger.Debug("marked old manifest and rangedel for cleanup", "file_num", oldManifestNum)
 
 	// Create new manifest file with incremented version number
 	vs.nextVersionNum++
@@ -370,6 +426,10 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 		newWriter.Close()
 		return fmt.Errorf("failed to create new range delete writer: %w", err)
 	}
+
+	// Register new manifest and range delete files with epoch system
+	registerManifestFile(vs.dir, newManifestNum)
+	registerRangeDeleteFile(vs.dir, newManifestNum)
 
 	// Write complete snapshot of current version to new manifest
 	snapshotEdit := &VersionEdit{
@@ -420,7 +480,7 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 	vs.manifestWriter = newWriter
 	vs.rangeDeleteWriter = newRangeDeleteWriter
 
-	vs.logger.Info("manifest rotation completed", "new_file_num", newManifestNum)
+	vs.logger.Info("manifest rotation completed", "old_file_num", oldManifestNum, "new_file_num", newManifestNum)
 	return nil
 }
 
