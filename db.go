@@ -224,6 +224,11 @@ func Open(opts *Options) (*DB, error) {
 		logger.Warn("failed to cleanup orphaned SST files", "error", err)
 	}
 
+	// Clean up old manifest files after manifest recovery
+	if err := db.cleanupOldManifestFiles(); err != nil {
+		logger.Warn("failed to cleanup old manifest files", "error", err)
+	}
+
 	// Recover sequence number from WAL and SSTables
 	var maxSeq uint64
 	if !opts.ReadOnly {
@@ -1247,6 +1252,67 @@ func (db *DB) cleanupOrphanedSSTFiles() error {
 			"orphaned", orphanedCount,
 			"total", totalFiles,
 			"remaining", totalFiles-orphanedCount)
+	}
+
+	return nil
+}
+
+// cleanupOldManifestFiles removes old manifest files that are not the current active manifest.
+// This is called during database startup to clean up files left over from manifest rotations.
+func (db *DB) cleanupOldManifestFiles() error {
+	// Get list of all manifest files in the database directory
+	manifestFiles, err := filepath.Glob(filepath.Join(db.path, "*.manifest"))
+	if err != nil {
+		return fmt.Errorf("failed to list manifest files: %w", err)
+	}
+
+	if len(manifestFiles) == 0 {
+		return nil // No manifest files to clean up
+	}
+
+	// Get current manifest number from the VersionSet
+	db.mu.RLock()
+	if db.versions.manifestWriter == nil {
+		db.mu.RUnlock()
+		return nil // No manifest writer yet, nothing to clean up
+	}
+	currentManifestNum := db.versions.manifestWriter.GetFileNum()
+	db.mu.RUnlock()
+
+	// Check each manifest file and remove if not current
+	oldCount := 0
+	totalFiles := len(manifestFiles)
+
+	for _, manifestFile := range manifestFiles {
+		// Extract file number from filename (e.g., "000003.manifest" -> 3)
+		filename := filepath.Base(manifestFile)
+		if !strings.HasSuffix(filename, ".manifest") {
+			continue
+		}
+
+		fileNumStr := strings.TrimSuffix(filename, ".manifest")
+		fileNum, err := strconv.ParseUint(fileNumStr, 10, 64)
+		if err != nil {
+			db.logger.Warn("invalid manifest filename, skipping", "filename", filename, "error", err)
+			continue
+		}
+
+		// If file is not the current manifest, remove it
+		if fileNum != currentManifestNum {
+			if err := os.Remove(manifestFile); err != nil {
+				db.logger.Warn("failed to remove old manifest file", "file", manifestFile, "error", err)
+			} else {
+				oldCount++
+				db.logger.Debug("removed old manifest file", "file", manifestFile, "fileNum", fileNum)
+			}
+		}
+	}
+
+	if oldCount > 0 {
+		db.logger.Info("cleaned up old manifest files",
+			"removed", oldCount,
+			"total", totalFiles,
+			"current", currentManifestNum)
 	}
 
 	return nil
