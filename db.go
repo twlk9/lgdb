@@ -360,7 +360,7 @@ func (db *DB) backgroundFlusher() {
 		sstableNum := db.versions.NewFileNumber()
 
 		// Flush the memtable to SSTable
-		edit, flushErr := db.flushMemtableToSSTable(mt, sstableNum)
+		edit, rangeDeleteEdit, flushErr := db.flushMemtableToSSTable(mt, sstableNum)
 		if flushErr != nil {
 			// Fail quick if the memtable flushing fails. Close up
 			// shop and go home.
@@ -371,7 +371,12 @@ func (db *DB) backgroundFlusher() {
 		}
 
 		db.mu.Lock()
-		verr := db.versions.LogAndApply(edit)
+		var verr error
+		if rangeDeleteEdit != nil {
+			verr = db.versions.LogAndApplyWithRangeDeletes(edit, rangeDeleteEdit)
+		} else {
+			verr = db.versions.LogAndApply(edit)
+		}
 		if verr != nil {
 			db.logger.Error("FATAL: Version Edit Failed (flushing memtable)", "error", verr, "sstable_num", sstableNum)
 			db.closed.Store(true)
@@ -760,9 +765,9 @@ func (db *DB) findMaxSequenceInSSTables() (uint64, error) {
 }
 
 // flushMemtableToSSTable writes a memtable to disk as an SSTable.
-// Creates the SSTable file, writes all entries, and returns a version edit.
+// Creates the SSTable file, writes all entries, and returns version edit and optional range delete edit.
 // This is where memtable data becomes persistent.
-func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uint64) (*VersionEdit, error) {
+func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uint64) (*VersionEdit, *RangeDeleteEdit, error) {
 	// Create SSTable file path
 	sstablePath := filepath.Join(db.path, fmt.Sprintf("%06d.sst", fileNumber))
 
@@ -777,7 +782,7 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	}
 	writer, err := sstable.NewSSTableWriter(wopts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Create raw iterator for the memtable to dump all entries without filtering
@@ -789,9 +794,12 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	memtableSize := memtable.Size()
 	memtableMemUsage := memtable.MemoryUsage()
 
+	// Collect range deletes during flush
+	var rangeDeletes []RangeTombstone
+
 	// Validate memtable has data before flushing
 	if memtableSize == 0 {
-		return nil, fmt.Errorf("attempted to flush empty memtable - this should not happen")
+		return nil, nil, fmt.Errorf("attempted to flush empty memtable - this should not happen")
 	}
 
 	// Log flush start with memtable stats
@@ -805,11 +813,24 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 		key := iter.Key()
 		value := iter.Value()
 
+		// Check if this is a range delete
+		if key.Kind() == keys.KindRangeDelete {
+			// Create range tombstone entry
+			rt := RangeTombstone{
+				ID:    db.versions.NewRangeDeleteID(),
+				Start: []byte(key.UserKey()),
+				End:   value,
+				Seq:   key.Seq(),
+			}
+			rangeDeletes = append(rangeDeletes, rt)
+			db.logger.Debug("flushing range delete", "start", string(rt.Start), "end", string(rt.End), "seq", rt.Seq)
+		}
+
 		entriesWritten++
 
 		err := writer.Add(key, value)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		iter.Next()
@@ -817,10 +838,10 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 
 	// Finish writing the SSTable
 	if err := writer.Finish(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := writer.Close(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Create file metadata for the new SSTable
@@ -835,15 +856,25 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	edit := NewVersionEdit()
 	edit.AddFile(0, fileMetadata)
 
+	// Create range delete edit if we found any range deletes
+	var rangeDeleteEdit *RangeDeleteEdit
+	if len(rangeDeletes) > 0 {
+		rangeDeleteEdit = NewRangeDeleteEdit()
+		for _, rt := range rangeDeletes {
+			rangeDeleteEdit.AddRangeDelete(rt)
+		}
+	}
+
 	db.logger.Debug("FLUSH_COMPLETE",
 		"file_number", fileNumber,
 		"entries", entriesWritten,
 		"memtable_entries_in", memtableSize,
 		"sstable_entries_out", entriesWritten,
 		"sstable_size_bytes", fileMetadata.Size,
+		"range_deletes", len(rangeDeletes),
 		"conversion_ratio", float64(entriesWritten)/float64(memtableSize))
 
-	return edit, nil
+	return edit, rangeDeleteEdit, nil
 }
 
 // loadCurrentVersion returns the current version protected by epoch.

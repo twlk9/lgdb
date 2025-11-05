@@ -30,6 +30,9 @@ type MergeIterator struct {
 	// Control whether tombstones are visible (needed for compaction)
 	includeTombstones bool
 
+	// Range deletes to apply during iteration
+	rangeDeletes []RangeTombstone
+
 	err error
 	seq uint64
 }
@@ -47,6 +50,34 @@ func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64) *M
 
 func (it *MergeIterator) AddIterator(iter Iterator) {
 	it.iterators = append(it.iterators, iter)
+}
+
+func (it *MergeIterator) SetRangeDeletes(rangeDeletes []RangeTombstone) {
+	it.rangeDeletes = rangeDeletes
+}
+
+// isCoveredByRangeDelete checks if a key is covered by any range delete
+func (it *MergeIterator) isCoveredByRangeDelete(key keys.EncodedKey) bool {
+	if len(it.rangeDeletes) == 0 {
+		return false
+	}
+
+	userKey := key.UserKey()
+	keySeq := key.Seq()
+
+	for _, rt := range it.rangeDeletes {
+		// Range delete must have higher sequence number to shadow this key
+		if rt.Seq <= keySeq {
+			continue
+		}
+
+		// Check if key is within range [start, end)
+		if userKey.Compare(keys.UserKey(rt.Start)) >= 0 && userKey.Compare(keys.UserKey(rt.End)) < 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (it *MergeIterator) advanceIterForSeq(iter Iterator) keys.EncodedKey {
@@ -202,7 +233,11 @@ func (it *MergeIterator) isValidEntry(key keys.EncodedKey) bool {
 		return false
 	}
 
-	// TODO: Add range deletion checks and other LSM filters
+	// Filter out keys covered by range deletes
+	if it.isCoveredByRangeDelete(key) {
+		return false
+	}
+
 	return true
 }
 

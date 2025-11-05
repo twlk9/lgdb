@@ -162,6 +162,9 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 		return fmt.Errorf("failed to apply compaction version edit: %w", err)
 	}
 
+	// Check for obsolete range deletes and remove them
+	cm.cleanupObsoleteRangeDeletes()
+
 	duration := time.Since(startTime)
 	cm.logger.Info("Compaction completed",
 		"level", compaction.level,
@@ -684,6 +687,10 @@ func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, ve
 	var cachedReaders []*CachedReader
 	// For compaction, we need to see tombstones to handle deletions properly
 	mergedIter := NewMergeIterator(nil, true, 0)
+
+	// Set range deletes from version for filtering during compaction
+	mergedIter.SetRangeDeletes(version.GetRangeDeletes())
+
 	// Add iterators for all input files
 	for _, levelFiles := range compaction.inputFiles {
 		for _, file := range levelFiles {
@@ -903,6 +910,75 @@ func (ci *compactionIterator) Close() error {
 	// Files are now protected by version references only
 
 	return nil
+}
+
+// cleanupObsoleteRangeDeletes checks for range deletes that no longer overlap
+// with any keys in the database and removes them
+func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
+	version := cm.versions.GetCurrentVersion()
+	if version == nil {
+		return
+	}
+
+	rangeDeletes := version.GetRangeDeletes()
+	if len(rangeDeletes) == 0 {
+		return
+	}
+
+	var obsoleteIDs []uint64
+
+	// Check each range delete to see if it still overlaps with any keys
+	for _, rt := range rangeDeletes {
+		hasOverlap := false
+
+		// Check all levels for overlapping keys
+		for level := 0; level < cm.options.NumLevels; level++ {
+			files := version.GetFiles(level)
+			for _, file := range files {
+				// Check if file's key range overlaps with range delete
+				// Range delete is [rt.Start, rt.End)
+				// File range is [file.SmallestKey, file.LargestKey]
+
+				smallestUser := file.SmallestKey.UserKey()
+				largestUser := file.LargestKey.UserKey()
+
+				// Check for overlap: file.largest >= rt.Start AND file.smallest < rt.End
+				if largestUser.Compare(keys.UserKey(rt.Start)) >= 0 &&
+					smallestUser.Compare(keys.UserKey(rt.End)) < 0 {
+					hasOverlap = true
+					break
+				}
+			}
+			if hasOverlap {
+				break
+			}
+		}
+
+		// If no overlap found, this range delete is obsolete
+		if !hasOverlap {
+			obsoleteIDs = append(obsoleteIDs, rt.ID)
+			cm.logger.Debug("range delete is obsolete", "id", rt.ID,
+				"start", string(rt.Start), "end", string(rt.End))
+		}
+	}
+
+	// Remove obsolete range deletes
+	if len(obsoleteIDs) > 0 {
+		rangeDeleteEdit := NewRangeDeleteEdit()
+		for _, id := range obsoleteIDs {
+			rangeDeleteEdit.RemoveRangeDelete(id)
+		}
+
+		// Apply the edit (with empty version edit)
+		emptyEdit := NewVersionEdit()
+		err := cm.versions.LogAndApplyWithRangeDeletes(emptyEdit, rangeDeleteEdit)
+		if err != nil {
+			cm.logger.Error("failed to remove obsolete range deletes", "error", err)
+			return
+		}
+
+		cm.logger.Info("removed obsolete range deletes", "count", len(obsoleteIDs))
+	}
 }
 
 // emptyIterator is a placeholder iterator for when no input files are available.

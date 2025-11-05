@@ -72,6 +72,9 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 	// Create streaming merge iterator for better allocation performance
 	mergeIter := NewMergeIterator(bounds, false, db.seq.Load())
 
+	// Set range deletes from version
+	mergeIter.SetRangeDeletes(version.GetRangeDeletes())
+
 	// Add memtable iterators
 	for _, memtable := range version.memtables {
 		iter := memtable.NewIterator()
