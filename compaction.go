@@ -932,7 +932,7 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 		hasOverlap := false
 
 		// Check all levels for overlapping keys
-		for level := 0; level < cm.options.NumLevels; level++ {
+		for level := range cm.options.MaxLevels {
 			files := version.GetFiles(level)
 			for _, file := range files {
 				// Check if file's key range overlaps with range delete
