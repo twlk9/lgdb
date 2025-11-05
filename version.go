@@ -34,6 +34,9 @@ type Version struct {
 	// Sequence number for this version snapshot - NEW
 	seqNum uint64
 
+	// Range deletes active in this version
+	rangeDeletes []RangeTombstone
+
 	// Version number
 	number uint64
 
@@ -51,9 +54,10 @@ func NewVersion(numLevels int) *Version {
 	resourceID := fmt.Sprintf("version_%p", &Version{})
 
 	version := &Version{
-		files:      make([][](*FileMetadata), numLevels),
-		memtables:  make([]*memtable.MemTable, 0), // Initialize empty slice
-		resourceID: resourceID,
+		files:        make([][](*FileMetadata), numLevels),
+		memtables:    make([]*memtable.MemTable, 0), // Initialize empty slice
+		rangeDeletes: make([]RangeTombstone, 0),
+		resourceID:   resourceID,
 	}
 
 	// Enter epoch and hold it for the lifetime of this version as current
@@ -118,6 +122,9 @@ func (v *Version) Clone() *Version {
 		newVersion.files[level] = make([]*FileMetadata, len(v.files[level]))
 		copy(newVersion.files[level], v.files[level])
 	}
+	// Copy range deletes
+	newVersion.rangeDeletes = make([]RangeTombstone, len(v.rangeDeletes))
+	copy(newVersion.rangeDeletes, v.rangeDeletes)
 
 	return newVersion
 }
@@ -139,6 +146,26 @@ func (v *Version) RemoveFile(level int, fileNum uint64) {
 			break
 		}
 	}
+}
+
+// AddRangeDelete adds a range delete to this version
+func (v *Version) AddRangeDelete(rt RangeTombstone) {
+	v.rangeDeletes = append(v.rangeDeletes, rt)
+}
+
+// RemoveRangeDelete removes a range delete by ID
+func (v *Version) RemoveRangeDelete(id uint64) {
+	for i, rt := range v.rangeDeletes {
+		if rt.ID == id {
+			v.rangeDeletes = append(v.rangeDeletes[:i], v.rangeDeletes[i+1:]...)
+			break
+		}
+	}
+}
+
+// GetRangeDeletes returns all active range deletes
+func (v *Version) GetRangeDeletes() []RangeTombstone {
+	return v.rangeDeletes
 }
 
 // VersionSet manages the sequence of versions
@@ -166,8 +193,14 @@ type VersionSet struct {
 	// Manifest writer
 	manifestWriter *ManifestWriter
 
+	// Range delete writer
+	rangeDeleteWriter *RangeDeleteWriter
+
 	// Maximum manifest file size before rotation
 	maxManifestFileSize int64
+
+	// Next range delete ID
+	nextRangeDeleteID uint64
 
 	// Logger for version operations
 	logger *slog.Logger
@@ -182,6 +215,7 @@ func NewVersionSet(numLevels int, dir string, maxManifestFileSize int64, logger 
 		versions:            []*Version{initial},
 		nextFileNum:         1,
 		nextVersionNum:      1,
+		nextRangeDeleteID:   1,
 		numLevels:           numLevels,
 		dir:                 dir,
 		maxManifestFileSize: maxManifestFileSize,
@@ -201,6 +235,16 @@ func (vs *VersionSet) NewFileNumber() uint64 {
 	return fileNum
 }
 
+// NewRangeDeleteID returns a new unique range delete ID
+func (vs *VersionSet) NewRangeDeleteID() uint64 {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+
+	id := vs.nextRangeDeleteID
+	vs.nextRangeDeleteID++
+	return id
+}
+
 // CurrFileNumber returns the current file number. Usually used for
 // debugging and such
 func (vs *VersionSet) CurrFileNumber() uint64 {
@@ -211,6 +255,11 @@ func (vs *VersionSet) CurrFileNumber() uint64 {
 
 // LogAndApply applies a version edit and makes it the current version
 func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
+	return vs.LogAndApplyWithRangeDeletes(edit, nil)
+}
+
+// LogAndApplyWithRangeDeletes applies both version and range delete edits
+func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDeleteEdit *RangeDeleteEdit) error {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
@@ -218,17 +267,37 @@ func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
 	epoch.AdvanceEpoch()
 	newVersion := vs.current.Clone()
 	newVersion.number = vs.nextVersionNum
+	currentVersionNum := vs.nextVersionNum
 	vs.nextVersionNum++
 
 	edit.Apply(newVersion)
 
+	// Apply range delete edits if present
+	if rangeDeleteEdit != nil {
+		for _, rt := range rangeDeleteEdit.addedDeletes {
+			newVersion.AddRangeDelete(rt)
+		}
+		for _, id := range rangeDeleteEdit.removedDeletes {
+			newVersion.RemoveRangeDelete(id)
+		}
+	}
+
 	// Initialize manifest writer if needed
 	if vs.manifestWriter == nil {
-		writer, err := NewManifestWriter(vs.dir, vs.nextVersionNum, vs.maxManifestFileSize)
+		writer, err := NewManifestWriter(vs.dir, currentVersionNum, vs.maxManifestFileSize)
 		if err != nil {
 			return err
 		}
 		vs.manifestWriter = writer
+	}
+
+	// Initialize range delete writer if needed (paired with manifest)
+	if vs.rangeDeleteWriter == nil {
+		writer, err := NewRangeDeleteWriter(vs.dir, vs.manifestWriter.GetFileNum())
+		if err != nil {
+			return err
+		}
+		vs.rangeDeleteWriter = writer
 	}
 
 	// Write to manifest file
@@ -236,9 +305,21 @@ func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
 		return err
 	}
 
+	// Write range delete edit if present
+	if rangeDeleteEdit != nil && !rangeDeleteEdit.IsEmpty() {
+		if err := vs.rangeDeleteWriter.WriteEdit(rangeDeleteEdit); err != nil {
+			return err
+		}
+	}
+
 	// Sync to disk for durability
 	if err := vs.manifestWriter.Sync(); err != nil {
 		return err
+	}
+	if vs.rangeDeleteWriter != nil {
+		if err := vs.rangeDeleteWriter.Sync(); err != nil {
+			return err
+		}
 	}
 
 	// Check if manifest needs rotation
@@ -268,11 +349,26 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 		return fmt.Errorf("failed to close current manifest: %w", err)
 	}
 
+	// Close current range delete writer if exists
+	if vs.rangeDeleteWriter != nil {
+		if err := vs.rangeDeleteWriter.Close(); err != nil {
+			return fmt.Errorf("failed to close current range delete writer: %w", err)
+		}
+	}
+
 	// Create new manifest file with incremented version number
 	vs.nextVersionNum++
-	newWriter, err := NewManifestWriter(vs.dir, vs.nextVersionNum, vs.maxManifestFileSize)
+	newManifestNum := vs.nextVersionNum
+	newWriter, err := NewManifestWriter(vs.dir, newManifestNum, vs.maxManifestFileSize)
 	if err != nil {
 		return fmt.Errorf("failed to create new manifest: %w", err)
+	}
+
+	// Create new range delete writer (paired with manifest)
+	newRangeDeleteWriter, err := NewRangeDeleteWriter(vs.dir, newManifestNum)
+	if err != nil {
+		newWriter.Close()
+		return fmt.Errorf("failed to create new range delete writer: %w", err)
 	}
 
 	// Write complete snapshot of current version to new manifest
@@ -291,35 +387,65 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 	// Write the snapshot
 	if err := newWriter.WriteVersionEdit(snapshotEdit); err != nil {
 		newWriter.Close()
+		newRangeDeleteWriter.Close()
 		return fmt.Errorf("failed to write manifest snapshot: %w", err)
 	}
 
-	// Sync new manifest
-	if err := newWriter.Sync(); err != nil {
-		newWriter.Close()
-		return fmt.Errorf("failed to sync new manifest: %w", err)
+	// Write range delete snapshot
+	if len(currentVersion.rangeDeletes) > 0 {
+		rangeDeleteSnapshot := NewRangeDeleteEdit()
+		for _, rt := range currentVersion.rangeDeletes {
+			rangeDeleteSnapshot.AddRangeDelete(rt)
+		}
+		if err := newRangeDeleteWriter.WriteEdit(rangeDeleteSnapshot); err != nil {
+			newWriter.Close()
+			newRangeDeleteWriter.Close()
+			return fmt.Errorf("failed to write range delete snapshot: %w", err)
+		}
 	}
 
-	// Update manifest writer
-	vs.manifestWriter = newWriter
+	// Sync new manifest and range delete file
+	if err := newWriter.Sync(); err != nil {
+		newWriter.Close()
+		newRangeDeleteWriter.Close()
+		return fmt.Errorf("failed to sync new manifest: %w", err)
+	}
+	if err := newRangeDeleteWriter.Sync(); err != nil {
+		newWriter.Close()
+		newRangeDeleteWriter.Close()
+		return fmt.Errorf("failed to sync new range delete file: %w", err)
+	}
 
-	vs.logger.Info("manifest rotation completed", "new_file_num", vs.nextVersionNum)
+	// Update writers
+	vs.manifestWriter = newWriter
+	vs.rangeDeleteWriter = newRangeDeleteWriter
+
+	vs.logger.Info("manifest rotation completed", "new_file_num", newManifestNum)
 	return nil
 }
 
-// Close closes the version set and its manifest writer
+// Close closes the version set and its writers
 func (vs *VersionSet) Close() error {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
+	var firstErr error
+
 	if vs.manifestWriter != nil {
-		if err := vs.manifestWriter.Close(); err != nil {
-			return err
+		if err := vs.manifestWriter.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 		vs.manifestWriter = nil
 	}
 
-	return nil
+	if vs.rangeDeleteWriter != nil {
+		if err := vs.rangeDeleteWriter.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		vs.rangeDeleteWriter = nil
+	}
+
+	return firstErr
 }
 
 // GetCurrentVersion safely returns the current version with epoch
@@ -352,6 +478,10 @@ func (vs *VersionSet) CreateVersionSnapshot(memtables []*memtable.MemTable, seqN
 		newVersion.files[level] = make([]*FileMetadata, len(vs.current.files[level]))
 		copy(newVersion.files[level], vs.current.files[level])
 	}
+
+	// Copy range deletes from current version
+	newVersion.rangeDeletes = make([]RangeTombstone, len(vs.current.rangeDeletes))
+	copy(newVersion.rangeDeletes, vs.current.rangeDeletes)
 
 	// Register all files referenced by this snapshot
 	newVersion.registerVersionFiles(vs.dir)

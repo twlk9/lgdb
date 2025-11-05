@@ -558,6 +558,21 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 	// Register all files from the recovered version
 	version.registerVersionFiles(vs.dir)
 
+	// Recover range deletes from paired range delete file
+	rangeDeletes, err := RecoverRangeDeletes(vs.dir, manifestNum)
+	if err != nil {
+		return fmt.Errorf("failed to recover range deletes: %w", err)
+	}
+	version.rangeDeletes = rangeDeletes
+
+	// Track max range delete ID for next allocation
+	maxRangeDeleteID := uint64(0)
+	for _, rt := range rangeDeletes {
+		if rt.ID > maxRangeDeleteID {
+			maxRangeDeleteID = rt.ID
+		}
+	}
+
 	// Install the recovered version
 	vs.mu.Lock()
 	if vs.current != nil {
@@ -579,6 +594,11 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 		vs.nextFileNum = maxFileNum + 1
 	}
 
+	// Update next range delete ID
+	if maxRangeDeleteID > 0 {
+		vs.nextRangeDeleteID = maxRangeDeleteID + 1
+	}
+
 	// Update manifest version number to be higher than recovered manifest
 	if manifestNum >= vs.nextVersionNum {
 		vs.nextVersionNum = manifestNum + 1
@@ -591,6 +611,14 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 		return fmt.Errorf("failed to reopen manifest for writing: %w", err)
 	}
 	vs.manifestWriter = writer
+
+	// Reopen range delete writer (may not exist if no range deletes)
+	rangeDeleteWriter, err := NewRangeDeleteWriter(vs.dir, manifestNum)
+	if err != nil {
+		vs.mu.Unlock()
+		return fmt.Errorf("failed to reopen range delete writer: %w", err)
+	}
+	vs.rangeDeleteWriter = rangeDeleteWriter
 
 	vs.mu.Unlock()
 
