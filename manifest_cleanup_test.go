@@ -277,7 +277,7 @@ func TestManifestRotationAndCleanup(t *testing.T) {
 
 	// Write some initial data to ensure manifest is created
 	// Need to exceed WriteBufferSize (100KB) to trigger flush
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		key := fmt.Sprintf("init_%06d", i)
 		value := make([]byte, 512)
 		if err := db.Put([]byte(key), value); err != nil {

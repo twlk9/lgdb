@@ -233,6 +233,11 @@ func (it *MergeIterator) isValidEntry(key keys.EncodedKey) bool {
 		return false
 	}
 
+	// Range delete tombstones themselves should not be returned as entries
+	if key.Kind() == keys.KindRangeDelete {
+		return false
+	}
+
 	// Filter out keys covered by range deletes
 	if it.isCoveredByRangeDelete(key) {
 		return false

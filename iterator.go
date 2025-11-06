@@ -72,8 +72,30 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 	// Create streaming merge iterator for better allocation performance
 	mergeIter := NewMergeIterator(bounds, false, db.seq.Load())
 
-	// Set range deletes from version
-	mergeIter.SetRangeDeletes(version.GetRangeDeletes())
+	// Collect range deletes from version AND memtables
+	rangeDeletes := make([]RangeTombstone, 0, len(version.GetRangeDeletes()))
+	rangeDeletes = append(rangeDeletes, version.GetRangeDeletes()...)
+
+	// Scan memtables for range delete entries
+	for _, mt := range version.memtables {
+		mtIter := mt.NewIterator()
+		for mtIter.SeekToFirst(); mtIter.Valid(); mtIter.Next() {
+			key := mtIter.Key()
+			if key.Kind() == keys.KindRangeDelete {
+				// Found a range delete in memtable
+				rt := RangeTombstone{
+					Start: []byte(key.UserKey()),
+					End:   mtIter.Value(),
+					Seq:   key.Seq(),
+					// ID not needed for filtering, only for persistence
+				}
+				rangeDeletes = append(rangeDeletes, rt)
+			}
+		}
+		mtIter.Close()
+	}
+
+	mergeIter.SetRangeDeletes(rangeDeletes)
 
 	// Add memtable iterators
 	for _, memtable := range version.memtables {
