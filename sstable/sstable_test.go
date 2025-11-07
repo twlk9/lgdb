@@ -342,3 +342,208 @@ func TestSSTableEmptyFile(t *testing.T) {
 		t.Fatalf("Empty SSTable should not contain any keys")
 	}
 }
+
+func TestSSTableCRC32Verification(t *testing.T) {
+	tmpDir := t.TempDir()
+	sstablePath := filepath.Join(tmpDir, "test_crc.sst")
+
+	// Test data with various sizes to ensure we cover multiple blocks
+	testData := []struct {
+		key   string
+		value string
+		seq   uint64
+	}{
+		{"key1", "value1", 1},
+		{"key2", "value2", 2},
+		{"key3", "value3", 3},
+		{"key4", "value4", 4},
+		{"key5", "value5", 5},
+	}
+
+	// Write SSTable
+	opts := SSTableOpts{Path: sstablePath, Compression: compression.DefaultConfig()}
+	writer, err := NewSSTableWriter(opts)
+	if err != nil {
+		t.Fatalf("Failed to create SSTable writer: %v", err)
+	}
+
+	for _, item := range testData {
+		encodedKey := keys.NewEncodedKey([]byte(item.key), item.seq, keys.KindSet)
+		err = writer.Add(encodedKey, []byte(item.value))
+		if err != nil {
+			t.Fatalf("Failed to add key-value pair: %v", err)
+		}
+	}
+
+	err = writer.Finish()
+	if err != nil {
+		t.Fatalf("Failed to finish SSTable: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("Failed to close SSTable: %v", err)
+	}
+
+	// Read SSTable - should succeed with valid CRC32 checksums
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	if err != nil {
+		t.Fatalf("Failed to create SSTable reader: %v", err)
+	}
+	defer reader.Close()
+
+	// Verify all keys can be read successfully
+	for _, item := range testData {
+		iter := reader.NewIterator(false)
+		seekKey := keys.NewEncodedKey([]byte(item.key), keys.MaxSequenceNumber, keys.KindSet)
+		iter.Seek(seekKey)
+
+		if !iter.Valid() {
+			iter.Close()
+			t.Fatalf("Key %s not found - CRC32 verification likely failed", item.key)
+		}
+
+		foundKey := iter.Key()
+		if !bytes.Equal(foundKey.UserKey(), []byte(item.key)) {
+			iter.Close()
+			t.Fatalf("Key %s not found", item.key)
+		}
+
+		value := iter.Value()
+		if string(value) != item.value {
+			iter.Close()
+			t.Fatalf("Expected value %s, got %s", item.value, string(value))
+		}
+		iter.Close()
+	}
+}
+
+func TestSSTableCRC32WithCompression(t *testing.T) {
+	tmpDir := t.TempDir()
+	sstablePath := filepath.Join(tmpDir, "test_crc_compression.sst")
+
+	// Test with snappy compression
+	opts := SSTableOpts{
+		Path:        sstablePath,
+		Compression: compression.Config{Type: compression.Snappy},
+	}
+	writer, err := NewSSTableWriter(opts)
+	if err != nil {
+		t.Fatalf("Failed to create SSTable writer: %v", err)
+	}
+
+	// Write some data with compression
+	testData := []struct {
+		key   string
+		value string
+		seq   uint64
+	}{
+		{"compressed1", "value_with_lots_of_repeated_bytes_1111111111", 1},
+		{"compressed2", "value_with_lots_of_repeated_bytes_2222222222", 2},
+		{"compressed3", "value_with_lots_of_repeated_bytes_3333333333", 3},
+	}
+
+	for _, item := range testData {
+		encodedKey := keys.NewEncodedKey([]byte(item.key), item.seq, keys.KindSet)
+		err = writer.Add(encodedKey, []byte(item.value))
+		if err != nil {
+			t.Fatalf("Failed to add key-value pair: %v", err)
+		}
+	}
+
+	err = writer.Finish()
+	if err != nil {
+		t.Fatalf("Failed to finish SSTable: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("Failed to close SSTable: %v", err)
+	}
+
+	// Read with compression - CRC32 should be verified on compressed data
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	if err != nil {
+		t.Fatalf("Failed to create SSTable reader: %v", err)
+	}
+	defer reader.Close()
+
+	// Verify all keys can be read and decompressed successfully
+	for _, item := range testData {
+		iter := reader.NewIterator(false)
+		seekKey := keys.NewQueryKey([]byte(item.key))
+		iter.Seek(seekKey)
+
+		if !iter.Valid() {
+			iter.Close()
+			t.Fatalf("Key %s not found", item.key)
+		}
+
+		value := iter.Value()
+		if string(value) != item.value {
+			iter.Close()
+			t.Fatalf("Expected value %s, got %s", item.value, string(value))
+		}
+		iter.Close()
+	}
+}
+
+func TestSSTableCRC32LargeBlocks(t *testing.T) {
+	tmpDir := t.TempDir()
+	sstablePath := filepath.Join(tmpDir, "test_crc_large.sst")
+
+	opts := SSTableOpts{Path: sstablePath, Compression: compression.DefaultConfig()}
+	writer, err := NewSSTableWriter(opts)
+	if err != nil {
+		t.Fatalf("Failed to create SSTable writer: %v", err)
+	}
+
+	// Create multiple large values to ensure multiple blocks are created
+	largeValue := make([]byte, 2000)
+	for i := range largeValue {
+		largeValue[i] = byte(i % 256)
+	}
+
+	numKeys := 20
+	for i := range numKeys {
+		key := fmt.Sprintf("largekey%04d", i)
+		encodedKey := keys.NewEncodedKey([]byte(key), uint64(i+1), keys.KindSet)
+		err = writer.Add(encodedKey, largeValue)
+		if err != nil {
+			t.Fatalf("Failed to add key %s: %v", key, err)
+		}
+	}
+
+	err = writer.Finish()
+	if err != nil {
+		t.Fatalf("Failed to finish SSTable: %v", err)
+	}
+	err = writer.Close()
+	if err != nil {
+		t.Fatalf("Failed to close SSTable: %v", err)
+	}
+
+	// Read and verify all keys with CRC32 verification
+	reader, err := NewSSTableReader(sstablePath, 0, nil, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
+	if err != nil {
+		t.Fatalf("Failed to create SSTable reader: %v", err)
+	}
+	defer reader.Close()
+
+	for i := range numKeys {
+		key := fmt.Sprintf("largekey%04d", i)
+		iter := reader.NewIterator(false)
+		seekKey := keys.NewQueryKey([]byte(key))
+		iter.Seek(seekKey)
+
+		if !iter.Valid() {
+			iter.Close()
+			t.Fatalf("Key %s not found - CRC32 verification likely failed", key)
+		}
+
+		value := iter.Value()
+		if len(value) != len(largeValue) {
+			iter.Close()
+			t.Fatalf("Value length mismatch for key %s: expected %d, got %d", key, len(largeValue), len(value))
+		}
+		iter.Close()
+	}
+}

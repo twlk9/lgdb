@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -217,9 +218,9 @@ func (w *SSTableWriter) flushDataBlock() error {
 	// Add compression type (1 byte)
 	blockWithTrailer[len(compressedData)] = compressionType
 
-	// Add CRC32 checksum (4 bytes) - simplified for now, use 0
-	// TODO: Implement proper CRC32 checksum
-	binary.LittleEndian.PutUint32(blockWithTrailer[len(compressedData)+1:], 0)
+	// Compute CRC32-Castagnoli checksum of compressed data
+	crc := crc32.Checksum(compressedData, crc32.MakeTable(crc32.Castagnoli))
+	binary.LittleEndian.PutUint32(blockWithTrailer[len(compressedData)+1:], crc)
 
 	// Write block to file
 	n, err := w.writer.Write(blockWithTrailer)
@@ -302,9 +303,9 @@ func (w *SSTableWriter) Finish() error {
 	// Add compression type (1 byte)
 	indexWithTrailer[len(compressedIndex)] = compressionType
 
-	// Add CRC32 checksum (4 bytes) - simplified for now, use 0
-	// TODO: Implement proper CRC32 checksum for index block
-	binary.LittleEndian.PutUint32(indexWithTrailer[len(compressedIndex)+1:], 0)
+	// Compute CRC32-Castagnoli checksum of compressed index data
+	crc := crc32.Checksum(compressedIndex, crc32.MakeTable(crc32.Castagnoli))
+	binary.LittleEndian.PutUint32(indexWithTrailer[len(compressedIndex)+1:], crc)
 
 	n, err := w.writer.Write(indexWithTrailer)
 	if err != nil {
