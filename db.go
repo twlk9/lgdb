@@ -851,11 +851,14 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 
 	// Create file metadata for the new SSTable
 	fileMetadata := &FileMetadata{
-		FileNum:     fileNumber,
-		Size:        writer.EstimatedSize(),
-		SmallestKey: writer.SmallestKey(),
-		LargestKey:  writer.LargestKey(),
-		NumEntries:  uint64(entriesWritten),
+		FileNum:       fileNumber,
+		Size:          writer.EstimatedSize(),
+		SmallestKey:   writer.SmallestKey(),
+		LargestKey:    writer.LargestKey(),
+		NumEntries:    uint64(entriesWritten),
+		SmallestSeq:   writer.SmallestSeq(),
+		LargestSeq:    writer.LargestSeq(),
+		NumTombstones: writer.NumTombstones(),
 	}
 
 	edit := NewVersionEdit()
