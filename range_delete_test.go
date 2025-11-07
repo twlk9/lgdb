@@ -19,7 +19,7 @@ func TestBasicRangeDelete(t *testing.T) {
 	defer db.Close()
 
 	// Write some keys
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := []byte{byte(i)}
 		value := []byte{byte(i + 100)}
 		if err := db.Put(key, value); err != nil {
@@ -28,7 +28,7 @@ func TestBasicRangeDelete(t *testing.T) {
 	}
 
 	// Verify they exist
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := []byte{byte(i)}
 		val, err := db.Get(key)
 		if err != nil {
@@ -46,7 +46,7 @@ func TestBasicRangeDelete(t *testing.T) {
 	}
 
 	// Keys 2-6 should be deleted, 0-1 and 7-9 should still exist
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		key := []byte{byte(i)}
 		val, err := db.Get(key)
 
@@ -131,9 +131,9 @@ func TestRangeDeletePersistence(t *testing.T) {
 		t.Fatalf("Failed to open DB: %v", err)
 	}
 
-	for i := 0; i < 20; i++ {
-		key := []byte(fmt.Sprintf("key%02d", i))
-		value := []byte(fmt.Sprintf("value%02d", i))
+	for i := range 20 {
+		key := fmt.Appendf(nil, "key%02d", i)
+		value := fmt.Appendf(nil, "value%02d", i)
 		if err := db.Put(key, value); err != nil {
 			t.Fatalf("Put failed: %v", err)
 		}
@@ -154,8 +154,8 @@ func TestRangeDeletePersistence(t *testing.T) {
 	}
 	defer db.Close()
 
-	for i := 0; i < 20; i++ {
-		key := []byte(fmt.Sprintf("key%02d", i))
+	for i := range 20 {
+		key := fmt.Appendf(nil, "key%02d", i)
 		val, err := db.Get(key)
 
 		if i >= 5 && i < 15 {
@@ -184,9 +184,9 @@ func TestMultipleRangeDeletes(t *testing.T) {
 	defer db.Close()
 
 	// Write keys 0-99
-	for i := 0; i < 100; i++ {
-		key := []byte(fmt.Sprintf("k%03d", i))
-		value := []byte(fmt.Sprintf("v%03d", i))
+	for i := range 100 {
+		key := fmt.Appendf(nil, "k%03d", i)
+		value := fmt.Appendf(nil, "v%03d", i)
 		if err := db.Put(key, value); err != nil {
 			t.Fatalf("Put failed: %v", err)
 		}
@@ -212,8 +212,8 @@ func TestMultipleRangeDeletes(t *testing.T) {
 	}
 
 	// Verify deletions
-	for i := 0; i < 100; i++ {
-		key := []byte(fmt.Sprintf("k%03d", i))
+	for i := range 100 {
+		key := fmt.Appendf(nil, "k%03d", i)
 		val, err := db.Get(key)
 
 		shouldBeDeleted := (i >= 10 && i < 20) || (i >= 50 && i < 60) || (i >= 80 && i < 90)
@@ -243,8 +243,8 @@ func TestRangeDeleteWithCompaction(t *testing.T) {
 	defer db.Close()
 
 	// Write enough data to trigger flush and compaction
-	for i := 0; i < 500; i++ {
-		key := []byte(fmt.Sprintf("key%04d", i))
+	for i := range 500 {
+		key := fmt.Appendf(nil, "key%04d", i)
 		value := make([]byte, 100)
 		for j := range value {
 			value[j] = byte(i % 256)
@@ -265,7 +265,7 @@ func TestRangeDeleteWithCompaction(t *testing.T) {
 
 	// Force more compaction
 	for i := 500; i < 700; i++ {
-		key := []byte(fmt.Sprintf("key%04d", i))
+		key := fmt.Appendf(nil, "key%04d", i)
 		value := make([]byte, 100)
 		if err := db.Put(key, value); err != nil {
 			t.Fatalf("Put failed: %v", err)
@@ -276,7 +276,7 @@ func TestRangeDeleteWithCompaction(t *testing.T) {
 
 	// Verify range delete still applies after compaction
 	for i := 200; i < 300; i++ {
-		key := []byte(fmt.Sprintf("key%04d", i))
+		key := fmt.Appendf(nil, "key%04d", i)
 		val, err := db.Get(key)
 		if err != ErrNotFound {
 			t.Errorf("Key key%04d should be deleted after compaction but got: val=%v err=%v", i, val, err)
@@ -285,7 +285,7 @@ func TestRangeDeleteWithCompaction(t *testing.T) {
 
 	// Verify keys outside range still exist
 	for i := 100; i < 200; i++ {
-		key := []byte(fmt.Sprintf("key%04d", i))
+		key := fmt.Appendf(nil, "key%04d", i)
 		_, err := db.Get(key)
 		if err != nil {
 			t.Errorf("Key key%04d should exist after compaction but got error: %v", i, err)

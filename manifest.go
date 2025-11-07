@@ -842,10 +842,10 @@ func RebuildManifestFromSSTables(dir string, vs *VersionSet, logger interface{ W
 			Size:          fileSize,
 			SmallestKey:   smallestKey,
 			LargestKey:    largestKey,
-			NumEntries:    0,                                       // Not stored in SSTable files, set to 0 (backwards compatible)
-			SmallestSeq:   keys.EncodedKey(smallestKey).Seq(),     // Extract from key for backward compatibility
-			LargestSeq:    keys.EncodedKey(largestKey).Seq(),      // Extract from key for backward compatibility
-			NumTombstones: 0,                                       // Not stored in SSTable files, set to 0 (backwards compatible)
+			NumEntries:    0,                                  // Not stored in SSTable files, set to 0 (backwards compatible)
+			SmallestSeq:   keys.EncodedKey(smallestKey).Seq(), // Extract from key for backward compatibility
+			LargestSeq:    keys.EncodedKey(largestKey).Seq(),  // Extract from key for backward compatibility
+			NumTombstones: 0,                                  // Not stored in SSTable files, set to 0 (backwards compatible)
 		}
 
 		// Add to L0 (all recovered files go to L0 initially)
