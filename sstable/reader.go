@@ -3,6 +3,7 @@ package sstable
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"log/slog"
 	"os"
@@ -168,8 +169,18 @@ func (r *SSTableReader) readFooter() error {
 	// Extract compression type from trailer (1 byte before CRC32)
 	compressionType := indexData[len(indexData)-BlockTrailerSize]
 
+	// Extract stored CRC32 checksum (4 bytes after compression type)
+	storedCRC := binary.LittleEndian.Uint32(indexData[len(indexData)-BlockTrailerSize+1:])
+
 	// Extract index block data (without trailer)
 	indexBlockData := indexData[:len(indexData)-BlockTrailerSize]
+
+	// Verify CRC32-Castagnoli checksum
+	computedCRC := crc32.Checksum(indexBlockData, crc32.MakeTable(crc32.Castagnoli))
+	if storedCRC != computedCRC {
+		r.logger.Error("Index block CRC32 mismatch", "sstable", r.path, "stored_crc", storedCRC, "computed_crc", computedCRC)
+		return fmt.Errorf("index block CRC32 mismatch: stored=%d, computed=%d", storedCRC, computedCRC)
+	}
 
 	// Decompress the index block data
 	decompressedIndexData, err := compression.DecompressBlock(nil, indexBlockData, compressionType)
@@ -378,8 +389,18 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle, noBlockCache bool) (*B
 	// Extract compression type from trailer (1 byte before CRC32)
 	compressionType := data[len(data)-BlockTrailerSize]
 
+	// Extract stored CRC32 checksum (4 bytes after compression type)
+	storedCRC := binary.LittleEndian.Uint32(data[len(data)-BlockTrailerSize+1:])
+
 	// Extract block data (without trailer)
 	blockData := data[:len(data)-BlockTrailerSize]
+
+	// Verify CRC32-Castagnoli checksum
+	computedCRC := crc32.Checksum(blockData, crc32.MakeTable(crc32.Castagnoli))
+	if storedCRC != computedCRC {
+		r.logger.Error("Data block CRC32 mismatch", "sstable", r.path, "offset", handle.Offset, "stored_crc", storedCRC, "computed_crc", computedCRC)
+		return nil, fmt.Errorf("data block CRC32 mismatch: stored=%d, computed=%d", storedCRC, computedCRC)
+	}
 
 	// Decompress the block data
 	decompressedData, err := compression.DecompressBlock(nil, blockData, compressionType)
