@@ -15,11 +15,14 @@ import (
 
 // FileMetadata contains metadata about an SSTable file
 type FileMetadata struct {
-	FileNum     uint64
-	Size        uint64
-	SmallestKey keys.EncodedKey
-	LargestKey  keys.EncodedKey
-	NumEntries  uint64 // Number of entries in this SSTable
+	FileNum       uint64
+	Size          uint64
+	SmallestKey   keys.EncodedKey
+	LargestKey    keys.EncodedKey
+	NumEntries    uint64 // Number of entries in this SSTable
+	SmallestSeq   uint64 // Smallest sequence number in this SSTable
+	LargestSeq    uint64 // Largest sequence number in this SSTable
+	NumTombstones uint64 // Number of delete tombstones in this SSTable
 }
 
 // Version represents a specific version of the database state

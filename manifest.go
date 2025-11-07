@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/twlk9/lgdb/keys"
 )
 
 const (
@@ -28,6 +30,7 @@ const (
 	tagAddFile            = 1
 	tagRemoveFile         = 2
 	tagAddFileWithEntries = 3 // Same as tagAddFile but includes NumEntries field
+	tagAddFileWithSeq     = 4 // Same as tagAddFileWithEntries but includes SmallestSeq and LargestSeq
 )
 
 // CRC32 table using the same polynomial as the original implementation (0xEDB88320)
@@ -163,8 +166,8 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 	// Write added files
 	for level, files := range edit.addFiles {
 		for _, file := range files {
-			// Tag for add file with entries
-			buf.WriteByte(tagAddFileWithEntries)
+			// Tag for add file with sequence numbers
+			buf.WriteByte(tagAddFileWithSeq)
 
 			// Level
 			binary.Write(&buf, binary.LittleEndian, uint32(level))
@@ -185,6 +188,13 @@ func (mw *ManifestWriter) encodeVersionEdit(edit *VersionEdit) ([]byte, error) {
 
 			// Number of entries
 			binary.Write(&buf, binary.LittleEndian, file.NumEntries)
+
+			// Smallest and largest sequence numbers
+			binary.Write(&buf, binary.LittleEndian, file.SmallestSeq)
+			binary.Write(&buf, binary.LittleEndian, file.LargestSeq)
+
+			// Number of tombstones
+			binary.Write(&buf, binary.LittleEndian, file.NumTombstones)
 		}
 	}
 
@@ -375,12 +385,16 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 			}
 
 			// Create file metadata (NumEntries = 0 for old format)
+			// Extract sequence numbers from keys for backward compatibility
 			file := &FileMetadata{
-				FileNum:     fileNum,
-				Size:        fileSize,
-				SmallestKey: smallestKey,
-				LargestKey:  largestKey,
-				NumEntries:  0,
+				FileNum:       fileNum,
+				Size:          fileSize,
+				SmallestKey:   smallestKey,
+				LargestKey:    largestKey,
+				NumEntries:    0,
+				SmallestSeq:   keys.EncodedKey(smallestKey).Seq(),
+				LargestSeq:    keys.EncodedKey(largestKey).Seq(),
+				NumTombstones: 0, // Not available in old format
 			}
 
 			edit.AddFile(int(level), file)
@@ -437,12 +451,96 @@ func (mr *ManifestReader) ReadVersionEdit(data []byte) (*VersionEdit, error) {
 			}
 
 			// Create file metadata
+			// Extract sequence numbers from keys for backward compatibility
 			file := &FileMetadata{
-				FileNum:     fileNum,
-				Size:        fileSize,
-				SmallestKey: smallestKey,
-				LargestKey:  largestKey,
-				NumEntries:  numEntries,
+				FileNum:       fileNum,
+				Size:          fileSize,
+				SmallestKey:   smallestKey,
+				LargestKey:    largestKey,
+				NumEntries:    numEntries,
+				SmallestSeq:   keys.EncodedKey(smallestKey).Seq(),
+				LargestSeq:    keys.EncodedKey(largestKey).Seq(),
+				NumTombstones: 0, // Not available in old format
+			}
+
+			edit.AddFile(int(level), file)
+
+		case tagAddFileWithSeq:
+			// New format with NumEntries and sequence numbers
+			// Read level
+			var level uint32
+			if err := binary.Read(buf, binary.LittleEndian, &level); err != nil {
+				return nil, err
+			}
+
+			// Read file number
+			var fileNum uint64
+			if err := binary.Read(buf, binary.LittleEndian, &fileNum); err != nil {
+				return nil, err
+			}
+
+			// Read file size
+			var fileSize uint64
+			if err := binary.Read(buf, binary.LittleEndian, &fileSize); err != nil {
+				return nil, err
+			}
+
+			// Read smallest key
+			var smallestKeyLen uint32
+			if err := binary.Read(buf, binary.LittleEndian, &smallestKeyLen); err != nil {
+				return nil, err
+			}
+			smallestKey := make([]byte, smallestKeyLen)
+			if _, err := io.ReadFull(buf, smallestKey); err != nil {
+				return nil, err
+			}
+
+			// Read largest key
+			var largestKeyLen uint32
+			if err := binary.Read(buf, binary.LittleEndian, &largestKeyLen); err != nil {
+				return nil, err
+			}
+			largestKey := make([]byte, largestKeyLen)
+			if _, err := io.ReadFull(buf, largestKey); err != nil {
+				return nil, err
+			}
+
+			// Read number of entries
+			var numEntries uint64
+			if err := binary.Read(buf, binary.LittleEndian, &numEntries); err != nil {
+				return nil, err
+			}
+
+			// Read smallest and largest sequence numbers
+			var smallestSeq, largestSeq uint64
+			if err := binary.Read(buf, binary.LittleEndian, &smallestSeq); err != nil {
+				return nil, err
+			}
+			if err := binary.Read(buf, binary.LittleEndian, &largestSeq); err != nil {
+				return nil, err
+			}
+
+			// Read number of tombstones
+			var numTombstones uint64
+			if err := binary.Read(buf, binary.LittleEndian, &numTombstones); err != nil {
+				return nil, err
+			}
+
+			// Validate keys are not empty - a file should always have a key range
+			if len(smallestKey) == 0 || len(largestKey) == 0 {
+				return nil, fmt.Errorf("manifest corruption: file %d has empty keys (smallestKeyLen=%d, largestKeyLen=%d)", fileNum, smallestKeyLen, largestKeyLen)
+			}
+
+			// Create file metadata with explicit sequence numbers and tombstone count
+			file := &FileMetadata{
+				FileNum:       fileNum,
+				Size:          fileSize,
+				SmallestKey:   smallestKey,
+				LargestKey:    largestKey,
+				NumEntries:    numEntries,
+				SmallestSeq:   smallestSeq,
+				LargestSeq:    largestSeq,
+				NumTombstones: numTombstones,
 			}
 
 			edit.AddFile(int(level), file)
@@ -740,11 +838,14 @@ func RebuildManifestFromSSTables(dir string, vs *VersionSet, logger interface{ W
 		}
 
 		metadata := &FileMetadata{
-			FileNum:     fileNum,
-			Size:        fileSize,
-			SmallestKey: smallestKey,
-			LargestKey:  largestKey,
-			NumEntries:  0, // Not stored in SSTable files, set to 0 (backwards compatible)
+			FileNum:       fileNum,
+			Size:          fileSize,
+			SmallestKey:   smallestKey,
+			LargestKey:    largestKey,
+			NumEntries:    0,                                       // Not stored in SSTable files, set to 0 (backwards compatible)
+			SmallestSeq:   keys.EncodedKey(smallestKey).Seq(),     // Extract from key for backward compatibility
+			LargestSeq:    keys.EncodedKey(largestKey).Seq(),      // Extract from key for backward compatibility
+			NumTombstones: 0,                                       // Not stored in SSTable files, set to 0 (backwards compatible)
 		}
 
 		// Add to L0 (all recovered files go to L0 initially)

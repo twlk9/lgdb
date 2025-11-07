@@ -79,6 +79,13 @@ type SSTableWriter struct {
 	smallestKey keys.EncodedKey
 	largestKey  keys.EncodedKey
 
+	// Sequence number range
+	smallestSeq uint64
+	largestSeq  uint64
+
+	// Tombstone tracking
+	numTombstones uint64
+
 	// Block handles for index
 	dataBlockHandles []BlockHandle
 
@@ -166,6 +173,25 @@ func (w *SSTableWriter) Add(key keys.EncodedKey, value []byte) error {
 	}
 	w.largestKey = make([]byte, len(key))
 	copy(w.largestKey, key)
+
+	// Update sequence number range
+	seq := key.Seq()
+	if w.numEntries == 0 {
+		w.smallestSeq = seq
+		w.largestSeq = seq
+	} else {
+		if seq < w.smallestSeq {
+			w.smallestSeq = seq
+		}
+		if seq > w.largestSeq {
+			w.largestSeq = seq
+		}
+	}
+
+	// Track tombstones
+	if key.Kind() == keys.KindDelete {
+		w.numTombstones++
+	}
 
 	// Process any pending index entries now that we know the next key
 	// This happens BEFORE adding the current key, so the separator will be
@@ -434,6 +460,21 @@ func (w *SSTableWriter) SmallestKey() keys.EncodedKey {
 // LargestKey returns the largest key
 func (w *SSTableWriter) LargestKey() keys.EncodedKey {
 	return w.largestKey
+}
+
+// SmallestSeq returns the smallest sequence number in the SSTable
+func (w *SSTableWriter) SmallestSeq() uint64 {
+	return w.smallestSeq
+}
+
+// LargestSeq returns the largest sequence number in the SSTable
+func (w *SSTableWriter) LargestSeq() uint64 {
+	return w.largestSeq
+}
+
+// NumTombstones returns the number of delete tombstones in the SSTable
+func (w *SSTableWriter) NumTombstones() uint64 {
+	return w.numTombstones
 }
 
 // File returns the underlying file descriptor for injection into cache

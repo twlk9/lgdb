@@ -756,11 +756,14 @@ func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fil
 
 	// Create file metadata
 	fileMetadata := &FileMetadata{
-		FileNum:     fileNum,
-		Size:        writer.EstimatedSize(),
-		SmallestKey: writer.SmallestKey(),
-		LargestKey:  writer.LargestKey(),
-		NumEntries:  uint64(numEntries),
+		FileNum:       fileNum,
+		Size:          writer.EstimatedSize(),
+		SmallestKey:   writer.SmallestKey(),
+		LargestKey:    writer.LargestKey(),
+		NumEntries:    uint64(numEntries),
+		SmallestSeq:   writer.SmallestSeq(),
+		LargestSeq:    writer.LargestSeq(),
+		NumTombstones: writer.NumTombstones(),
 	}
 
 	compaction.outputFiles = append(compaction.outputFiles, fileMetadata)
@@ -935,6 +938,15 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 		for level := range cm.options.MaxLevels {
 			files := version.GetFiles(level)
 			for _, file := range files {
+				// OPTIMIZATION: If range delete's sequence is older than all keys in file,
+				// it can't affect this file at all (all keys are newer)
+				if rt.Seq < file.SmallestSeq {
+					cm.logger.Debug("skipping file - range delete too old",
+						"rangeDeleteID", rt.ID, "rangeDeleteSeq", rt.Seq,
+						"fileNum", file.FileNum, "fileSmallestSeq", file.SmallestSeq)
+					continue // Skip this file
+				}
+
 				// Check if file's key range overlaps with range delete
 				// Range delete is [rt.Start, rt.End)
 				// File range is [file.SmallestKey, file.LargestKey]
@@ -945,6 +957,11 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 				// Check for overlap: file.largest >= rt.Start AND file.smallest < rt.End
 				if largestUser.Compare(keys.UserKey(rt.Start)) >= 0 &&
 					smallestUser.Compare(keys.UserKey(rt.End)) < 0 {
+					cm.logger.Debug("found overlap - range delete still needed",
+						"rangeDeleteID", rt.ID, "rangeDeleteSeq", rt.Seq,
+						"fileNum", file.FileNum, "level", level,
+						"fileSmallestSeq", file.SmallestSeq, "fileLargestSeq", file.LargestSeq,
+						"fileSmallest", string(smallestUser), "fileLargest", string(largestUser))
 					hasOverlap = true
 					break
 				}
