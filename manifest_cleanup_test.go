@@ -56,7 +56,7 @@ func TestManifestFileCleanup(t *testing.T) {
 	db.WaitForCompaction() // Wait for flush to complete
 
 	// Now should have a manifest file
-	count, files := countManifestFiles()
+	count, _ := countManifestFiles()
 	if count == 0 {
 		t.Fatalf("No manifest file created after initial writes (wrote 200 keys)")
 	}
@@ -81,7 +81,7 @@ func TestManifestFileCleanup(t *testing.T) {
 	currentManifest := getCurrentManifestNum()
 	t.Logf("Current manifest after writes: %06d.manifest", currentManifest)
 
-	count, files = countManifestFiles()
+	count, files := countManifestFiles()
 	t.Logf("Manifest files after writes: count=%d, files=%v", count, files)
 
 	// If rotation occurred, we should eventually have only 1 manifest file after cleanup
