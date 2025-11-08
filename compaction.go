@@ -685,8 +685,15 @@ func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Versi
 func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, version *Version) (Iterator, error) {
 	var iterators []Iterator
 	var cachedReaders []*CachedReader
+
+	// Count total input files for capacity hint
+	expectedIterators := 0
+	for _, levelFiles := range compaction.inputFiles {
+		expectedIterators += len(levelFiles)
+	}
+
 	// For compaction, we need to see tombstones to handle deletions properly
-	mergedIter := NewMergeIterator(nil, true, 0)
+	mergedIter := NewMergeIterator(nil, true, 0, expectedIterators)
 
 	// Set range deletes from version for filtering during compaction
 	mergedIter.SetRangeDeletes(version.GetRangeDeletes())

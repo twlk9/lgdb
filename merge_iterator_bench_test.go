@@ -33,8 +33,8 @@ func BenchmarkMergeIteratorSeekSmallInputs(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Create merge iterator
-		mi := NewMergeIterator(nil, false, 0)
+		// Create merge iterator with exact capacity
+		mi := NewMergeIterator(nil, false, 0, numIterators)
 		for _, mt := range memtables {
 			iter := mt.NewIterator()
 			mi.AddIterator(iter)
@@ -84,8 +84,8 @@ func BenchmarkMergeIteratorSeekLargeInputs(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Create merge iterator
-		mi := NewMergeIterator(nil, false, 0)
+		// Create merge iterator with exact capacity
+		mi := NewMergeIterator(nil, false, 0, numIterators)
 		for _, mt := range memtables {
 			iter := mt.NewIterator()
 			mi.AddIterator(iter)
@@ -134,8 +134,8 @@ func BenchmarkMergeIteratorFullScanSmallInputs(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Create merge iterator
-		mi := NewMergeIterator(nil, false, 0)
+		// Create merge iterator with exact capacity
+		mi := NewMergeIterator(nil, false, 0, numIterators)
 		for _, mt := range memtables {
 			iter := mt.NewIterator()
 			mi.AddIterator(iter)
@@ -177,8 +177,8 @@ func BenchmarkMergeIteratorFullScanLargeInputs(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Create merge iterator
-		mi := NewMergeIterator(nil, false, 0)
+		// Create merge iterator with exact capacity
+		mi := NewMergeIterator(nil, false, 0, numIterators)
 		for _, mt := range memtables {
 			iter := mt.NewIterator()
 			mi.AddIterator(iter)
@@ -218,7 +218,7 @@ func BenchmarkMergeIteratorFindMinimum(b *testing.B) {
 		iterators[m].SeekToFirst()
 	}
 
-	mi := NewMergeIterator(nil, false, 0)
+	mi := NewMergeIterator(nil, false, 0, numIterators)
 	mi.iterators = iterators
 
 	b.ReportAllocs()
@@ -254,8 +254,8 @@ func BenchmarkMergeIteratorWithDuplicates(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Create merge iterator
-		mi := NewMergeIterator(nil, false, 0)
+		// Create merge iterator with exact capacity
+		mi := NewMergeIterator(nil, false, 0, numIterators)
 		for _, mt := range memtables {
 			iter := mt.NewIterator()
 			mi.AddIterator(iter)
