@@ -93,13 +93,10 @@ type MergeIterator struct {
 	seq uint64
 }
 
-func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64) *MergeIterator {
-	return NewMergeIteratorWithCapacity(bounds, includeTombstones, seq, 8)
-}
-
-// NewMergeIteratorWithCapacity creates a merge iterator with a hint for the expected number of iterators.
+// NewMergeIterator creates a merge iterator with a hint for the expected number of iterators.
 // Pre-sizing reduces allocations during AddIterator and initialization.
-func NewMergeIteratorWithCapacity(bounds *keys.Range, includeTombstones bool, seq uint64, expectedIterators int) *MergeIterator {
+// Pass the exact number of iterators you plan to add for best performance.
+func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64, expectedIterators int) *MergeIterator {
 	if expectedIterators < 1 {
 		expectedIterators = 8
 	}

@@ -69,8 +69,22 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 		opts = DefaultReadOptions()
 	}
 
-	// Create streaming merge iterator for better allocation performance
-	mergeIter := NewMergeIterator(bounds, false, db.seq.Load())
+	// Count iterators needed: memtables + overlapping SSTable files
+	expectedIterators := len(version.memtables)
+	for level := 0; level < len(version.files); level++ {
+		files := version.GetFiles(level)
+		for _, file := range files {
+			// Skip files that don't overlap with our bounds
+			skipLower := bounds.Start != nil && file.LargestKey.Compare(bounds.Start) < 0
+			skipUpper := bounds.Limit != nil && file.SmallestKey.Compare(bounds.Limit) >= 0
+			if !skipLower && !skipUpper {
+				expectedIterators++
+			}
+		}
+	}
+
+	// Create streaming merge iterator with exact capacity
+	mergeIter := NewMergeIterator(bounds, false, db.seq.Load(), expectedIterators)
 
 	// Collect range deletes from version AND memtables
 	rangeDeletes := make([]RangeTombstone, 0, len(version.GetRangeDeletes()))
