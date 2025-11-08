@@ -7,10 +7,9 @@ import (
 	"github.com/twlk9/lgdb/keys"
 )
 
-// heapEntry represents an iterator and its current key in the merge heap
+// heapEntry represents an iterator in the merge heap
 type heapEntry struct {
 	iter Iterator
-	key  keys.EncodedKey // Cached current key (a copy)
 }
 
 // iteratorHeap implements heap.Interface for merging multiple iterators
@@ -26,7 +25,16 @@ func (h iteratorHeap) Less(i, j int) bool {
 	// - User key (primary)
 	// - Sequence number descending (secondary - newer first)
 	// - Kind ascending (tertiary)
-	return h[i].key.Compare(h[j].key) < 0
+	// Call Key() on demand instead of caching to reduce memory usage
+	ki := h[i].iter.Key()
+	kj := h[j].iter.Key()
+	if ki == nil {
+		return false
+	}
+	if kj == nil {
+		return true
+	}
+	return ki.Compare(kj) < 0
 }
 
 func (h iteratorHeap) Swap(i, j int) {
@@ -66,7 +74,6 @@ type MergeIterator struct {
 	h *iteratorHeap
 
 	// Reusable buffers to avoid allocations
-	keyBuf           []byte // Arena for copied keys
 	winningKeyBuffer []byte
 	winningKey       keys.EncodedKey
 	userKeyBuffer    []byte // Buffer for user key copies
@@ -90,22 +97,12 @@ func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64) *M
 		iterators:         make([]Iterator, 0, 8),
 		bounds:            bounds,
 		h:                 &h,
-		keyBuf:            make([]byte, 0, 1024), // Pre-allocate 1KB for the key arena
-		winningKeyBuffer:  make([]byte, 0, 64),   // Pre-allocate reasonable size
-		userKeyBuffer:     make([]byte, 0, 32),   // Pre-allocate for user keys
+		winningKeyBuffer:  make([]byte, 0, 64), // Pre-allocate reasonable size
+		userKeyBuffer:     make([]byte, 0, 32), // Pre-allocate for user keys
 		entryPool:         sync.Pool{New: func() any { return new(heapEntry) }},
 		includeTombstones: includeTombstones,
 		seq:               seq, // Sequence snapshot for this iterator's life
 	}
-}
-
-// copyKey appends a copy of the given key to the iterator's arena (it.keyBuf)
-// and returns a slice pointing to the copied data. This is the core of the
-// allocation optimization.
-func (it *MergeIterator) copyKey(key []byte) []byte {
-	offset := len(it.keyBuf)
-	it.keyBuf = append(it.keyBuf, key...)
-	return it.keyBuf[offset:]
 }
 
 // getHeapEntry retrieves a heapEntry from the pool.
@@ -128,8 +125,7 @@ func (it *MergeIterator) SetRangeDeletes(rangeDeletes []RangeTombstone) {
 
 // rebuildHeap rebuilds the heap from current iterator positions.
 func (it *MergeIterator) rebuildHeap() {
-	// Reset the key arena, as all keys in the heap will be replaced.
-	it.keyBuf = it.keyBuf[:0]
+	// Return all existing entries to pool
 	for _, e := range *it.h {
 		it.putHeapEntry(e)
 	}
@@ -154,7 +150,6 @@ func (it *MergeIterator) rebuildHeap() {
 
 		entry := it.getHeapEntry()
 		entry.iter = iter
-		entry.key = it.copyKey(currentKey)
 		heap.Push(it.h, entry)
 	}
 }
@@ -165,7 +160,7 @@ func (it *MergeIterator) peekMinimum() (Iterator, keys.EncodedKey) {
 		return nil, nil
 	}
 	entry := (*it.h)[0]
-	return entry.iter, entry.key
+	return entry.iter, entry.iter.Key()
 }
 
 // findMinimumIterator returns the iterator with the smallest current key.
@@ -180,12 +175,22 @@ func (it *MergeIterator) popAndAdvanceMatchingKeys() {
 		return
 	}
 
-	minUserKey := (*it.h)[0].key.UserKey()
+	// Get the minimum user key and save it to compare against
+	minKey := (*it.h)[0].iter.Key()
+	if minKey == nil {
+		return
+	}
+	minUserKey := minKey.UserKey()
 	it.userKeyBuffer = copyInto(it.userKeyBuffer, minUserKey)
 
 	// This loop is safe because we are comparing against a stable copy (it.userKeyBuffer)
 	// and the heap property ensures subsequent keys with the same user key will surface.
-	for len(*it.h) > 0 && (*it.h)[0].key.UserKey().Compare(it.userKeyBuffer) == 0 {
+	for len(*it.h) > 0 {
+		topKey := (*it.h)[0].iter.Key()
+		if topKey == nil || topKey.UserKey().Compare(it.userKeyBuffer) != 0 {
+			break
+		}
+
 		entry := heap.Pop(it.h).(*heapEntry)
 		entry.iter.Next()
 		if !entry.iter.Valid() {
@@ -207,8 +212,7 @@ func (it *MergeIterator) popAndAdvanceMatchingKeys() {
 			}
 		}
 
-		// Reuse the entry, update its key, and push back to heap.
-		entry.key = it.copyKey(currentKey)
+		// Reuse the entry and push back to heap
 		heap.Push(it.h, entry)
 	}
 }
@@ -356,10 +360,6 @@ func (it *MergeIterator) Error() error {
 }
 
 func (it *MergeIterator) Close() error {
-	// Release memory from the key arena
-	it.keyBuf = nil
-	it.entryPool.New = nil
-
 	for _, iter := range it.iterators {
 		if iter != nil {
 			iter.Close()
