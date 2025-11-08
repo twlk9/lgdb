@@ -1,8 +1,49 @@
 package lgdb
 
 import (
+	"container/heap"
+	"sync"
+
 	"github.com/twlk9/lgdb/keys"
 )
+
+// heapEntry represents an iterator and its current key in the merge heap
+type heapEntry struct {
+	iter Iterator
+	key  keys.EncodedKey // Cached current key (a copy)
+}
+
+// iteratorHeap implements heap.Interface for merging multiple iterators
+// The heap maintains entries ordered by their keys using EncodedKey.Compare()
+type iteratorHeap []*heapEntry
+
+func (h iteratorHeap) Len() int {
+	return len(h)
+}
+
+func (h iteratorHeap) Less(i, j int) bool {
+	// Compare keys using EncodedKey.Compare() semantics:
+	// - User key (primary)
+	// - Sequence number descending (secondary - newer first)
+	// - Kind ascending (tertiary)
+	return h[i].key.Compare(h[j].key) < 0
+}
+
+func (h iteratorHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *iteratorHeap) Push(x any) {
+	*h = append(*h, x.(*heapEntry))
+}
+
+func (h *iteratorHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[0 : n-1]
+	return item
+}
 
 // copyInto will directly copy src to dst if it's big enough otherwise
 // we'll allocate some more space
@@ -15,17 +56,23 @@ func copyInto(dst []byte, src []byte) []byte {
 	return dst
 }
 
-// MergeIterator uses a streaming approach to merge multiple iterators
-// without maintaining a heap of all keys, reducing allocations significantly.
+// MergeIterator uses a heap to merge multiple iterators efficiently.
 type MergeIterator struct {
 	iterators []Iterator
 	current   Iterator
 	bounds    *keys.Range
 
+	// Heap for efficient minimum finding
+	h *iteratorHeap
+
 	// Reusable buffers to avoid allocations
+	keyBuf           []byte // Arena for copied keys
 	winningKeyBuffer []byte
 	winningKey       keys.EncodedKey
 	userKeyBuffer    []byte // Buffer for user key copies
+
+	// Pool for heap entries to reduce allocations
+	entryPool sync.Pool
 
 	// Control whether tombstones are visible (needed for compaction)
 	includeTombstones bool
@@ -38,14 +85,37 @@ type MergeIterator struct {
 }
 
 func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64) *MergeIterator {
+	h := make(iteratorHeap, 0, 8)
 	return &MergeIterator{
 		iterators:         make([]Iterator, 0, 8),
 		bounds:            bounds,
-		winningKeyBuffer:  make([]byte, 0, 64), // Pre-allocate reasonable size
-		userKeyBuffer:     make([]byte, 0, 32), // Pre-allocate for user keys
+		h:                 &h,
+		keyBuf:            make([]byte, 0, 1024), // Pre-allocate 1KB for the key arena
+		winningKeyBuffer:  make([]byte, 0, 64),   // Pre-allocate reasonable size
+		userKeyBuffer:     make([]byte, 0, 32),   // Pre-allocate for user keys
+		entryPool:         sync.Pool{New: func() any { return new(heapEntry) }},
 		includeTombstones: includeTombstones,
 		seq:               seq, // Sequence snapshot for this iterator's life
 	}
+}
+
+// copyKey appends a copy of the given key to the iterator's arena (it.keyBuf)
+// and returns a slice pointing to the copied data. This is the core of the
+// allocation optimization.
+func (it *MergeIterator) copyKey(key []byte) []byte {
+	offset := len(it.keyBuf)
+	it.keyBuf = append(it.keyBuf, key...)
+	return it.keyBuf[offset:]
+}
+
+// getHeapEntry retrieves a heapEntry from the pool.
+func (it *MergeIterator) getHeapEntry() *heapEntry {
+	return it.entryPool.Get().(*heapEntry)
+}
+
+// putHeapEntry returns a heapEntry to the pool.
+func (it *MergeIterator) putHeapEntry(e *heapEntry) {
+	it.entryPool.Put(e)
 }
 
 func (it *MergeIterator) AddIterator(iter Iterator) {
@@ -56,50 +126,14 @@ func (it *MergeIterator) SetRangeDeletes(rangeDeletes []RangeTombstone) {
 	it.rangeDeletes = rangeDeletes
 }
 
-// isCoveredByRangeDelete checks if a key is covered by any range delete
-func (it *MergeIterator) isCoveredByRangeDelete(key keys.EncodedKey) bool {
-	if len(it.rangeDeletes) == 0 {
-		return false
+// rebuildHeap rebuilds the heap from current iterator positions.
+func (it *MergeIterator) rebuildHeap() {
+	// Reset the key arena, as all keys in the heap will be replaced.
+	it.keyBuf = it.keyBuf[:0]
+	for _, e := range *it.h {
+		it.putHeapEntry(e)
 	}
-
-	userKey := key.UserKey()
-	keySeq := key.Seq()
-
-	for _, rt := range it.rangeDeletes {
-		// Range delete must have higher sequence number to shadow this key
-		if rt.Seq <= keySeq {
-			continue
-		}
-
-		// Check if key is within range [start, end)
-		if userKey.Compare(keys.UserKey(rt.Start)) >= 0 && userKey.Compare(keys.UserKey(rt.End)) < 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (it *MergeIterator) advanceIterForSeq(iter Iterator) keys.EncodedKey {
-	for iter.Valid() {
-		key := iter.Key()
-		if key == nil {
-			return nil
-		}
-		if it.seq < key.Seq() {
-			iter.Next()
-			continue
-		}
-		return key
-	}
-	return nil
-}
-
-// findMinimumIterator finds the iterator with the smallest current
-// key without copying any keys - just comparing direct references
-func (it *MergeIterator) findMinimumIterator() (Iterator, keys.EncodedKey) {
-	var minItem Iterator
-	var minKey keys.EncodedKey
+	*it.h = (*it.h)[:0]
 
 	for _, iter := range it.iterators {
 		if !iter.Valid() || iter == nil {
@@ -118,127 +152,158 @@ func (it *MergeIterator) findMinimumIterator() (Iterator, keys.EncodedKey) {
 			}
 		}
 
-		if minKey == nil || currentKey.Compare(minKey) < 0 {
-			minItem = iter
-			minKey = currentKey
-		}
+		entry := it.getHeapEntry()
+		entry.iter = iter
+		entry.key = it.copyKey(currentKey)
+		heap.Push(it.h, entry)
 	}
-
-	return minItem, minKey
 }
 
-// advanceMatchingIterators advances all iterators that have the same user key
-// This implements LSM semantics where newer levels override older levels
-func (it *MergeIterator) advanceMatchingIterators(userKey []byte) {
-	// Advance ALL iterators that have this exact user key
-	// This preserves correct ordering of non-matching iterators
-	for _, iter := range it.iterators {
-		if !iter.Valid() || iter == nil {
+// peekMinimum returns the iterator with the minimum key without removing it from the heap.
+func (it *MergeIterator) peekMinimum() (Iterator, keys.EncodedKey) {
+	if it.h == nil || len(*it.h) == 0 {
+		return nil, nil
+	}
+	entry := (*it.h)[0]
+	return entry.iter, entry.key
+}
+
+// findMinimumIterator returns the iterator with the smallest current key.
+func (it *MergeIterator) findMinimumIterator() (Iterator, keys.EncodedKey) {
+	return it.peekMinimum()
+}
+
+// popAndAdvanceMatchingKeys pops all heap entries with the same user key as the minimum,
+// advances those specific iterators, and re-adds them to the heap if they have more data.
+func (it *MergeIterator) popAndAdvanceMatchingKeys() {
+	if len(*it.h) == 0 {
+		return
+	}
+
+	minUserKey := (*it.h)[0].key.UserKey()
+	it.userKeyBuffer = copyInto(it.userKeyBuffer, minUserKey)
+
+	// This loop is safe because we are comparing against a stable copy (it.userKeyBuffer)
+	// and the heap property ensures subsequent keys with the same user key will surface.
+	for len(*it.h) > 0 && (*it.h)[0].key.UserKey().Compare(it.userKeyBuffer) == 0 {
+		entry := heap.Pop(it.h).(*heapEntry)
+		entry.iter.Next()
+		if !entry.iter.Valid() {
+			it.putHeapEntry(entry) // Return to pool
 			continue
 		}
 
-		// Check if this iterator's current key matches the winning user key
-		for iter.Valid() {
-			currentKey := iter.Key()
-			if currentKey == nil {
-				break
-			}
+		currentKey := entry.iter.Key()
+		if currentKey == nil {
+			it.putHeapEntry(entry) // Return to pool
+			continue
+		}
 
-			// If user keys match, advance past this duplicate
-			if currentKey.UserKey().Compare(userKey) == 0 {
-				iter.Next()
-			} else {
-				break // Different user key, stop advancing this iterator
+		if it.seq > 0 && it.seq < currentKey.Seq() {
+			currentKey = it.advanceIterForSeq(entry.iter)
+			if currentKey == nil {
+				it.putHeapEntry(entry) // Return to pool
+				continue
 			}
 		}
+
+		// Reuse the entry, update its key, and push back to heap.
+		entry.key = it.copyKey(currentKey)
+		heap.Push(it.h, entry)
 	}
 }
 
-// findAndSetCurrent finds the minimum key and sets it as current without advancing iterators
+// findAndSetCurrent finds the minimum key and sets it as current.
 func (it *MergeIterator) findAndSetCurrent() {
 	it.current = nil
 	it.winningKey = nil
 
 	for {
-		// Find iterator with minimum key
 		minItem, minKey := it.findMinimumIterator()
 		if minItem == nil || minKey == nil {
-			return // End of iteration - no more valid iterators
+			return
 		}
 
-		// Copy the winning key into our reusable buffer
 		it.winningKeyBuffer = copyInto(it.winningKeyBuffer, minKey)
 		it.winningKey = keys.EncodedKey(it.winningKeyBuffer)
 
-		// Check if this entry passes filters
 		if it.isValidEntry(it.winningKey) {
 			it.current = minItem
 			return
-		} else {
-			// Check if key is past upper bound - if so, we're done
-			if it.bounds != nil && it.bounds.Limit != nil {
-				userKey := it.winningKey.UserKey()
-				if userKey.Compare(it.bounds.Limit.UserKey()) >= 0 {
-					// Past upper bound - end iteration
-					it.current = nil
-					return
-				}
-			}
 		}
 
-		// Entry filtered out, advance and try again
-		userKey := it.winningKey.UserKey()
-		it.userKeyBuffer = copyInto(it.userKeyBuffer, userKey)
-		it.advanceMatchingIterators(it.userKeyBuffer)
-
-		// Continue loop to find next valid entry
+		if it.bounds != nil && it.bounds.Limit != nil {
+			if it.winningKey.UserKey().Compare(it.bounds.Limit.UserKey()) >= 0 {
+				it.current = nil
+				return
+			}
+		}
+		it.popAndAdvanceMatchingKeys()
 	}
 }
 
 func (it *MergeIterator) Next() {
-	// First advance the current iterator (if we have one)
-	if it.current != nil && it.winningKey != nil {
-		userKey := it.winningKey.UserKey()
-		it.userKeyBuffer = copyInto(it.userKeyBuffer, userKey)
-		it.advanceMatchingIterators(it.userKeyBuffer)
+	if it.current != nil {
+		it.popAndAdvanceMatchingKeys()
+	}
+	it.findAndSetCurrent()
+}
+
+// isCoveredByRangeDelete checks if a key is covered by any range delete
+func (it *MergeIterator) isCoveredByRangeDelete(key keys.EncodedKey) bool {
+	if len(it.rangeDeletes) == 0 {
+		return false
 	}
 
-	// Then find the next valid entry
-	it.findAndSetCurrent()
+	userKey := key.UserKey()
+	keySeq := key.Seq()
+
+	for _, rt := range it.rangeDeletes {
+		if rt.Seq <= keySeq {
+			continue
+		}
+		if userKey.Compare(keys.UserKey(rt.Start)) >= 0 && userKey.Compare(keys.UserKey(rt.End)) < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (it *MergeIterator) advanceIterForSeq(iter Iterator) keys.EncodedKey {
+	for iter.Valid() {
+		key := iter.Key()
+		if key == nil {
+			return nil
+		}
+		if it.seq < key.Seq() {
+			iter.Next()
+			continue
+		}
+		return key
+	}
+	return nil
 }
 
 func (it *MergeIterator) isValidEntry(key keys.EncodedKey) bool {
 	userKey := key.UserKey()
 
-	// Check bounds
 	if it.bounds != nil {
-		// Check upper bound (exclusive)
-		if it.bounds.Limit != nil {
-			if userKey.Compare(it.bounds.Limit.UserKey()) >= 0 {
-				return false
-			}
+		if it.bounds.Limit != nil && userKey.Compare(it.bounds.Limit.UserKey()) >= 0 {
+			return false
 		}
-
-		// Check lower bound (inclusive)
-		if it.bounds.Start != nil {
-			if userKey.Compare(it.bounds.Start.UserKey()) < 0 {
-				return false
-			}
+		if it.bounds.Start != nil && userKey.Compare(it.bounds.Start.UserKey()) < 0 {
+			return false
 		}
 	}
 
-	// Point tombstones are not returned as valid entries for regular reads
-	// but are needed for compaction to handle deletions properly
 	if key.Kind() == keys.KindDelete && !it.includeTombstones {
 		return false
 	}
 
-	// Range delete tombstones themselves should not be returned as entries
 	if key.Kind() == keys.KindRangeDelete {
 		return false
 	}
 
-	// Filter out keys covered by range deletes
 	if it.isCoveredByRangeDelete(key) {
 		return false
 	}
@@ -250,13 +315,10 @@ func (it *MergeIterator) SeekToFirst() {
 	it.err = nil
 	it.current = nil
 	it.winningKey = nil
-
-	// Position all iterators to first
 	for _, iter := range it.iterators {
 		iter.SeekToFirst()
 	}
-
-	// Find first valid entry without advancing
+	it.rebuildHeap()
 	it.findAndSetCurrent()
 }
 
@@ -264,13 +326,10 @@ func (it *MergeIterator) Seek(target keys.EncodedKey) {
 	it.err = nil
 	it.current = nil
 	it.winningKey = nil
-
-	// Position all iterators to target
 	for _, iter := range it.iterators {
 		iter.Seek(target)
 	}
-
-	// Find first valid entry >= target without advancing
+	it.rebuildHeap()
 	it.findAndSetCurrent()
 }
 
@@ -297,6 +356,10 @@ func (it *MergeIterator) Error() error {
 }
 
 func (it *MergeIterator) Close() error {
+	// Release memory from the key arena
+	it.keyBuf = nil
+	it.entryPool.New = nil
+
 	for _, iter := range it.iterators {
 		if iter != nil {
 			iter.Close()
