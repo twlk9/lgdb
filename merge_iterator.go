@@ -2,7 +2,7 @@ package lgdb
 
 import (
 	"container/heap"
-	"sync"
+	"unsafe"
 
 	"github.com/twlk9/lgdb/keys"
 )
@@ -78,8 +78,10 @@ type MergeIterator struct {
 	winningKey       keys.EncodedKey
 	userKeyBuffer    []byte // Buffer for user key copies
 
-	// Pool for heap entries to reduce allocations
-	entryPool sync.Pool
+	// Pre-allocated heap entries to avoid allocations
+	heapEntries []heapEntry // Fixed-size array of heap entries
+	freeList    []int       // Indices of available entries in heapEntries
+	initialized bool        // Whether heap structures have been initialized
 
 	// Control whether tombstones are visible (needed for compaction)
 	includeTombstones bool
@@ -92,27 +94,70 @@ type MergeIterator struct {
 }
 
 func NewMergeIterator(bounds *keys.Range, includeTombstones bool, seq uint64) *MergeIterator {
-	h := make(iteratorHeap, 0, 8)
+	return NewMergeIteratorWithCapacity(bounds, includeTombstones, seq, 8)
+}
+
+// NewMergeIteratorWithCapacity creates a merge iterator with a hint for the expected number of iterators.
+// Pre-sizing reduces allocations during AddIterator and initialization.
+func NewMergeIteratorWithCapacity(bounds *keys.Range, includeTombstones bool, seq uint64, expectedIterators int) *MergeIterator {
+	if expectedIterators < 1 {
+		expectedIterators = 8
+	}
+	h := make(iteratorHeap, 0, expectedIterators)
 	return &MergeIterator{
-		iterators:         make([]Iterator, 0, 8),
+		iterators:         make([]Iterator, 0, expectedIterators),
 		bounds:            bounds,
 		h:                 &h,
 		winningKeyBuffer:  make([]byte, 0, 64), // Pre-allocate reasonable size
 		userKeyBuffer:     make([]byte, 0, 32), // Pre-allocate for user keys
-		entryPool:         sync.Pool{New: func() any { return new(heapEntry) }},
 		includeTombstones: includeTombstones,
 		seq:               seq, // Sequence snapshot for this iterator's life
 	}
 }
 
-// getHeapEntry retrieves a heapEntry from the pool.
-func (it *MergeIterator) getHeapEntry() *heapEntry {
-	return it.entryPool.Get().(*heapEntry)
+// ensureInitialized sets up the heap structures with pre-allocated capacity.
+// This is called once on first Seek/SeekToFirst to avoid allocations during iteration.
+func (it *MergeIterator) ensureInitialized() {
+	if it.initialized {
+		return
+	}
+	it.initialized = true
+
+	n := len(it.iterators)
+	if n == 0 {
+		return
+	}
+
+	// Pre-allocate heap entries array and free list
+	it.heapEntries = make([]heapEntry, n)
+	it.freeList = make([]int, n)
+	for i := range n {
+		it.freeList[i] = i
+	}
+
+	// Resize heap slice to exact capacity needed
+	if cap(*it.h) < n {
+		*it.h = make(iteratorHeap, 0, n)
+	}
 }
 
-// putHeapEntry returns a heapEntry to the pool.
+// getHeapEntry retrieves a heapEntry from the pre-allocated array.
+func (it *MergeIterator) getHeapEntry() *heapEntry {
+	if len(it.freeList) == 0 {
+		panic("merge_iterator: no free heap entries available")
+	}
+	// Pop from free list
+	idx := it.freeList[len(it.freeList)-1]
+	it.freeList = it.freeList[:len(it.freeList)-1]
+	return &it.heapEntries[idx]
+}
+
+// putHeapEntry returns a heapEntry to the free list.
 func (it *MergeIterator) putHeapEntry(e *heapEntry) {
-	it.entryPool.Put(e)
+	e.iter = nil // Clear the iterator reference
+	// Find the index of this entry in heapEntries
+	idx := int(uintptr(unsafe.Pointer(e))-uintptr(unsafe.Pointer(&it.heapEntries[0]))) / int(unsafe.Sizeof(heapEntry{}))
+	it.freeList = append(it.freeList, idx)
 }
 
 func (it *MergeIterator) AddIterator(iter Iterator) {
@@ -125,7 +170,10 @@ func (it *MergeIterator) SetRangeDeletes(rangeDeletes []RangeTombstone) {
 
 // rebuildHeap rebuilds the heap from current iterator positions.
 func (it *MergeIterator) rebuildHeap() {
-	// Return all existing entries to pool
+	// Ensure heap structures are initialized
+	it.ensureInitialized()
+
+	// Return all existing entries to free list
 	for _, e := range *it.h {
 		it.putHeapEntry(e)
 	}
