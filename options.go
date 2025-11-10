@@ -31,9 +31,10 @@ var (
 	DefaultMaxManifestFileSize          int64 = 256 * MiB
 	DefaultWALSyncInterval                    = 500 * time.Millisecond
 	DefaultWALMinSyncInterval                 = 500 * time.Microsecond
-	DefaultCompactionOverlapThreshold         = 4.0 // Expand selection if overlaps > 4x input size
-	DefaultCompactionMaxExpansionFiles        = 20  // Expand up to 20 files
-	DefaultCompactionTargetOverlapRatio       = 2.0 // After expansion, aim for <= 2x overlap ratio
+	DefaultCompactionOverlapThreshold         = 4.0  // Expand selection if overlaps > 4x input size
+	DefaultCompactionMaxExpansionFiles        = 20   // Expand up to 20 files
+	DefaultCompactionTargetOverlapRatio       = 2.0  // After expansion, aim for <= 2x overlap ratio
+	DefaultRangeDeleteCompactionEnabled       = true // Enable range delete compactions by default
 
 	// File descriptor management constants (following Pebble's approach)
 	NumReservedFiles = 10 // Reserve file descriptors for WAL, manifest, temp files, etc.
@@ -173,6 +174,14 @@ type Options struct {
 	// Default: 2.0 means we want overlaps to be at most 2x the input size
 	CompactionTargetOverlapRatio float64
 
+	// RangeDeleteCompactionEnabled controls whether to proactively compact ranges
+	// that are affected by range deletions. This helps clear tombstones faster,
+	// reclaim space, and reduce memory pressure from accumulated range deletes.
+	// When enabled, after L0 and size-based compactions are satisfied, the system
+	// will pick the oldest range delete and compact the affected range to eliminate it.
+	// Default: true
+	RangeDeleteCompactionEnabled bool
+
 	// Structured logger
 	Logger *slog.Logger
 }
@@ -207,6 +216,7 @@ func DefaultOptions() *Options {
 		CompactionOverlapThreshold:   DefaultCompactionOverlapThreshold,
 		CompactionMaxExpansionFiles:  DefaultCompactionMaxExpansionFiles,
 		CompactionTargetOverlapRatio: DefaultCompactionTargetOverlapRatio,
+		RangeDeleteCompactionEnabled: DefaultRangeDeleteCompactionEnabled,
 		Logger:                       DefaultLogger(),
 	}
 

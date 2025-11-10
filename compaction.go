@@ -109,9 +109,9 @@ func (cm *CompactionManager) compactionWorker() {
 
 			// Grab a fresh current version when we're ready to do work
 			version := cm.versions.GetCurrentVersion()
-			// Pick compaction based on fresh version
-			compaction := cm.pickCompaction(version)
-			if compaction == nil {
+			// Pick compaction(s) based on fresh version
+			compactions := cm.pickCompaction(version)
+			if compactions == nil {
 				cm.logger.Debug("No compaction needed")
 				// Signal completion even when no work is needed
 				select {
@@ -122,8 +122,32 @@ func (cm *CompactionManager) compactionWorker() {
 				continue
 			}
 
-			// Do the actual compaction work
-			err := cm.doCompactionWork(compaction, version)
+			// Process all compactions sequentially
+			var err error
+			for i, compaction := range compactions {
+				if len(compactions) > 1 {
+					cm.logger.Info("Processing compaction batch",
+						"progress", fmt.Sprintf("%d/%d", i+1, len(compactions)),
+						"level", compaction.level)
+				}
+
+				// Do the actual compaction work
+				err = cm.doCompactionWork(compaction, version)
+				if err != nil {
+					cm.logger.Error("Compaction failed",
+						"error", err,
+						"batchIndex", i,
+						"totalInBatch", len(compactions))
+					break
+				}
+
+				// Check if we need to remove a range delete after this compaction
+				if compaction.rangeDeleteToRemove != 0 {
+					cm.logger.Info("Removing range delete after compaction",
+						"rangeDeleteID", compaction.rangeDeleteToRemove)
+					cm.removeRangeDelete(compaction.rangeDeleteToRemove)
+				}
+			}
 
 			// Signal completion (non-blocking)
 			select {
@@ -188,18 +212,27 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 }
 
 // pickCompaction selects the best compaction to run using Pebble-style logic.
-func (cm *CompactionManager) pickCompaction(version *Version) *Compaction {
+// pickCompaction returns a list of compactions to run.
+// Most compactions return a single item, but range delete compactions
+// may return multiple compactions (one per affected level) that should
+// all be executed before the range delete can be safely removed.
+func (cm *CompactionManager) pickCompaction(version *Version) []*Compaction {
 
-	// Check if L0 needs compaction (most urgent)
+	// Priority 1: Check if L0 needs compaction (most urgent)
 	if compaction := cm.pickL0Compaction(version); compaction != nil {
-		// Compaction takes ownership of the version reference
-		return compaction
+		return []*Compaction{compaction}
 	}
 
-	// Check if any other level needs compaction
+	// Priority 2: Check if any other level needs compaction
 	if compaction := cm.pickLevelCompaction(version); compaction != nil {
-		// Compaction takes ownership of the version reference
-		return compaction
+		return []*Compaction{compaction}
+	}
+
+	// Priority 3: Check if we can compact to eliminate range deletes
+	if cm.options.RangeDeleteCompactionEnabled {
+		if compactions := cm.pickRangeDeleteCompaction(version); compactions != nil {
+			return compactions
+		}
 	}
 
 	// No compaction needed
@@ -547,6 +580,125 @@ func (cm *CompactionManager) expandSelection(version *Version, selected, allSort
 	return selected
 }
 
+// pickRangeDeleteCompaction picks compactions to eliminate a range delete tombstone.
+// Strategy: Pick the oldest range delete (lowest sequence number) and create same-level
+// compactions (Lx→Lx) for ALL affected levels. This ensures we process every file that
+// could potentially contain keys in the range delete's scope. After all compactions complete,
+// we can safely remove the range delete from memory.
+// Returns multiple compactions (one per affected level) that should all be run before
+// removing the range delete.
+func (cm *CompactionManager) pickRangeDeleteCompaction(version *Version) []*Compaction {
+	rangeDeletes := version.GetRangeDeletes()
+	if len(rangeDeletes) == 0 {
+		return nil
+	}
+
+	// Find the oldest range delete (lowest sequence number)
+	var oldestRT *RangeTombstone
+	for i := range rangeDeletes {
+		rt := &rangeDeletes[i]
+		if oldestRT == nil || rt.Seq < oldestRT.Seq {
+			oldestRT = rt
+		}
+	}
+
+	if oldestRT == nil {
+		return nil
+	}
+
+	cm.logger.Info("Considering range delete compaction",
+		"rangeDeleteID", oldestRT.ID,
+		"seq", oldestRT.Seq,
+		"start", string(oldestRT.Start),
+		"end", string(oldestRT.End))
+
+	// Find all files that overlap with this range delete across all levels
+	// Map: level -> overlapping files
+	affectedFiles := make(map[int][]*FileMetadata)
+	totalFiles := 0
+
+	for level := 0; level < cm.options.MaxLevels; level++ {
+		files := version.GetFiles(level)
+		var overlapping []*FileMetadata
+
+		for _, file := range files {
+			// CRITICAL: Skip files where range delete can't affect any keys
+			// If range delete's sequence is older than all keys in file,
+			// it can't delete anything in this file (all keys are newer)
+			if oldestRT.Seq < file.SmallestSeq {
+				continue
+			}
+
+			// Check if file's key range overlaps with range delete
+			// Range delete is [Start, End)
+			// File range is [SmallestKey, LargestKey]
+			smallestUser := file.SmallestKey.UserKey()
+			largestUser := file.LargestKey.UserKey()
+
+			// Check for overlap: file.largest >= rt.Start AND file.smallest < rt.End
+			if largestUser.Compare(keys.UserKey(oldestRT.Start)) >= 0 &&
+				smallestUser.Compare(keys.UserKey(oldestRT.End)) < 0 {
+				overlapping = append(overlapping, file)
+			}
+		}
+
+		if len(overlapping) > 0 {
+			affectedFiles[level] = overlapping
+			totalFiles += len(overlapping)
+		}
+	}
+
+	if totalFiles == 0 {
+		cm.logger.Debug("No files overlap with range delete - will be cleaned up",
+			"rangeDeleteID", oldestRT.ID)
+		return nil
+	}
+
+	// Create same-level compactions for ALL affected levels
+	// This ensures we process every file that could contain keys in the range delete's scope
+	var compactions []*Compaction
+
+	for level, files := range affectedFiles {
+		cm.logger.Info("PICKED_RANGE_DELETE_COMPACTION",
+			"rangeDeleteID", oldestRT.ID,
+			"rangeDeleteSeq", oldestRT.Seq,
+			"level", level,
+			"outputLevel", level,
+			"inputFiles", cm.getFileNums(files),
+			"compactionType", "same-level",
+			"totalAffectedLevels", len(affectedFiles),
+			"totalAffectedFiles", totalFiles)
+
+		// Create same-level compaction (Lx→Lx)
+		// This rewrites the affected files at the same level, applying the range delete
+		compaction := &Compaction{
+			level:             level,
+			outputLevel:       level, // Same level!
+			version:           version,
+			inputFiles:        make([][]*FileMetadata, 2),
+			outputFiles:       make([]*FileMetadata, 0),
+			stats:             &CompactionStats{},
+			maxOutputFileSize: cm.options.TargetFileSize(level),
+		}
+
+		// Set input files - only from the same level, no merge with next level
+		compaction.inputFiles[0] = append([]*FileMetadata{}, files...)
+		compaction.inputFiles[1] = nil // No files from "next level"
+
+		compactions = append(compactions, compaction)
+	}
+
+	if len(compactions) == 0 {
+		return nil
+	}
+
+	// Mark the LAST compaction to remove the range delete after completion
+	// This ensures all affected levels have been compacted before removal
+	compactions[len(compactions)-1].rangeDeleteToRemove = oldestRT.ID
+
+	return compactions
+}
+
 // doCompaction performs the actual compaction work.
 func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Version) (*VersionEdit, error) {
 	// Create iterator for merging all input files
@@ -856,6 +1008,7 @@ type Compaction struct {
 	outputFiles       []*FileMetadata
 	stats             *CompactionStats
 	maxOutputFileSize int64
+	rangeDeleteToRemove uint64 // If non-zero, remove this range delete after compaction completes
 }
 
 // KeyNotExistsBeyondOutputLevel returns true if the given user key definitely
@@ -1003,6 +1156,23 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 
 		cm.logger.Info("removed obsolete range deletes", "count", len(obsoleteIDs))
 	}
+}
+
+// removeRangeDelete removes a range delete from memory after all affected
+// files have been compacted.
+func (cm *CompactionManager) removeRangeDelete(id uint64) {
+	rangeDeleteEdit := NewRangeDeleteEdit()
+	rangeDeleteEdit.RemoveRangeDelete(id)
+
+	// Apply the edit (with empty version edit)
+	emptyEdit := NewVersionEdit()
+	err := cm.versions.LogAndApplyWithRangeDeletes(emptyEdit, rangeDeleteEdit)
+	if err != nil {
+		cm.logger.Error("failed to remove range delete", "error", err, "id", id)
+		return
+	}
+
+	cm.logger.Info("removed range delete", "id", id)
 }
 
 // emptyIterator is a placeholder iterator for when no input files are available.

@@ -1170,14 +1170,17 @@ func (db *DB) CompactAll() error {
 
 		// Check if any compaction work is needed BEFORE scheduling
 		version := db.versions.GetCurrentVersion()
-		compaction := db.compactionManager.pickCompaction(version)
+		compactions := db.compactionManager.pickCompaction(version)
 		version.MarkForCleanup()
 
-		if compaction == nil {
+		if compactions == nil {
 			// No more compaction work needed
 			break
 		}
-		compaction.Cleanup() // Clean up the picked compaction
+		// Clean up the picked compactions
+		for _, compaction := range compactions {
+			compaction.Cleanup()
+		}
 
 		// Schedule compaction work
 		db.compactionManager.ScheduleCompaction()
