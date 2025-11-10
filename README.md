@@ -1,21 +1,42 @@
 # lgdb - Level Go Database
 
 An embedded key-value store. Thread-safe, minimal dependencies (just
-compression at this point).
+[compression](https://github.com/klauspost/compress) at this
+point). References used include
+[pebble](https://github.com/cockroachdb/pebble),
+[rocksdb](https://github.com/facebook/rocksdb), and
+[goleveldb](https://github.com/syndtr/goleveldb)
 
 Started as a learning project but ended up actually being useful. Did
 my best to keep things simple and understandable while maintaining
-performance.
+performance. Easier said than done.
 
 Doesn't have bloom filters since my main use case is range queries on
-time series data. No range deletion support yet either. I tried a few
-approaches but haven't landed on something I'm happy with yet. Will
-keep trying.
+time series data. May add them as an option at some point.
 
-It does have tiered compression. Run hot data (L0-L2) through fast S2
-compression and let the cold data (L3+) get hit with Zstd for space
-efficiency. Or just pick one compression method for everything if you
-prefer.
+## Range Deletion
+
+I have attempted a bunch of different methods, but was unsatisfied
+with the results. Current solution is to store range deletions in a
+manifest like file and read into memory on open. All iterators respect
+the range deletion including compactions. To keep these range
+deletions from lingering in memory for too long the db attempts to
+compact them away after sweeping L0 and making sure no other levels
+are over their size limit. The compaction manager will select the
+oldest range deletion and perform a same level compaction by rewriting
+any sstable with overlapping keys and containing a lower sequence
+(without the keys covered by the range deletion of course). After
+clearing all levels of possible overlap the range deletion is
+removed. Still needs more testing, but initially seems to perform well
+for my workload.
+
+## Tiered Compression
+
+More a sliding range where you can set lower levels to one compression
+and higher levels to a different one. Run hot data (L0-L2) through
+fast S2 compression and let the cold data (L3+) get hit with Zstd for
+space efficiency. Or just pick one compression method for everything
+if you prefer.
 
 ## Quick Start
 
