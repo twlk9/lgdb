@@ -536,15 +536,11 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 			return err
 		}
 
-		// Sync write options and global settings
-		if db.options.Sync {
-			if opts.Sync {
-				if err := db.wal.Sync(); err != nil {
-					db.mu.RUnlock()
-					return err
-				}
-			} else {
-				_ = db.wal.SyncAsync()
+		// Sync write if requested
+		if opts.Sync {
+			if err := db.wal.Sync(); err != nil {
+				db.mu.RUnlock()
+				return err
 			}
 		}
 	}
