@@ -447,56 +447,12 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 
 	// Calculate the data portion size
 	dataSize := dataLen - metadataSize
-	var blockData []byte
-	if dataSize > 0 {
-		blockData = make([]byte, dataSize)
-		copy(blockData, data[:dataSize])
-	}
 
-	// Parse block metadata: count entries and build restartEntryIndx in a single pass
-	numEntries, restartEntryIndx := r.parseBlockAndBuildIndex(blockData, restarts)
-
-	// Cache keys at restart points for faster seeking
-	restartKeys := make([][]byte, len(restarts))
-	for i, restartOffset := range restarts {
-		if restartOffset < uint32(len(blockData)) {
-			// At restart points, shared length is always 0
-			offset := int(restartOffset)
-
-			// Skip shared length (always 0 at restart points)
-			_, n := binary.Uvarint(blockData[offset:])
-			if n <= 0 {
-				r.logger.Warn("Failed to parse shared length at restart point", "restart_index", i, "offset", restartOffset, "sstable", r.path)
-				continue
-			}
-			offset += n
-
-			// Read unshared key length
-			unshared, n := binary.Uvarint(blockData[offset:])
-			if n <= 0 {
-				r.logger.Warn("Failed to parse unshared key length at restart point", "restart_index", i, "offset", restartOffset, "sstable", r.path)
-				continue
-			}
-			offset += n
-
-			// Skip value length
-			_, n = binary.Uvarint(blockData[offset:])
-			if n <= 0 {
-				r.logger.Warn("Failed to parse value length at restart point", "restart_index", i, "offset", restartOffset, "sstable", r.path)
-				continue
-			}
-			offset += n
-
-			// Read the key
-			if offset+int(unshared) <= len(blockData) {
-				restartKeys[i] = make([]byte, unshared)
-				copy(restartKeys[i], blockData[offset:offset+int(unshared)])
-			}
-		}
-	}
+	// Parse block metadata and cache restart keys in a single pass
+	numEntries, restartEntryIndx, restartKeys := r.parseBlockAndBuildIndex(data[:dataSize], restarts)
 
 	b := &Block{
-		data:             blockData,
+		data:             data[:dataSize],
 		restarts:         restarts,
 		numEntries:       numEntries,
 		restartKeys:      restartKeys,
@@ -506,19 +462,44 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 }
 
 // parseBlockAndBuildIndex parses block data to count entries and build restartEntryIndx.
-func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) (uint32, []int) {
+func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) (uint32, []int, [][]byte) {
 	if len(data) == 0 {
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	var numEntries uint32
 	offset := 0
 	restartEntryIndx := make([]int, len(restarts))
+	restartKeys := make([][]byte, len(restarts))
 	currentRestart := 0
 
 	for offset < len(data) {
 		if currentRestart < len(restarts) && uint32(offset) >= restarts[currentRestart] {
 			restartEntryIndx[currentRestart] = int(numEntries)
+
+			// At restart points, shared length is always 0
+			// We can directly cache the key here
+			keyOffset := offset
+			// Skip shared length (always 0 at restart points)
+			_, n := binary.Uvarint(data[keyOffset:])
+			if n > 0 {
+				keyOffset += n
+				// Read unshared key length
+				unshared, n := binary.Uvarint(data[keyOffset:])
+				if n > 0 {
+					keyOffset += n
+					// Skip value length
+					_, n = binary.Uvarint(data[keyOffset:])
+					if n > 0 {
+						keyOffset += n
+						// Read the key
+						if keyOffset+int(unshared) <= len(data) {
+							restartKeys[currentRestart] = make([]byte, unshared)
+							copy(restartKeys[currentRestart], data[keyOffset:keyOffset+int(unshared)])
+						}
+					}
+				}
+			}
 			currentRestart++
 		}
 
@@ -551,7 +532,7 @@ func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) 
 		numEntries++
 	}
 
-	return numEntries, restartEntryIndx
+	return numEntries, restartEntryIndx, restartKeys
 }
 
 // EntryBuffers provides reusable buffers for key-value reconstruction
