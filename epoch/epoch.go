@@ -41,7 +41,16 @@ type GlobalEpochManager struct {
 }
 
 // Global singleton instance
-var globalManager = &GlobalEpochManager{}
+var globalManager = &GlobalEpochManager{
+	// Initialize epoch counter to 1 to avoid confusion with 0 sentinel values
+	// in cleanup logic (xmax = 0 means "not marked for cleanup")
+	currentEpoch: atomic.Uint64{},
+}
+
+func init() {
+	// Start epoch counter at 1 to avoid epoch 0 cleanup issues
+	globalManager.currentEpoch.Store(1)
+}
 
 // EnterEpoch enters a new epoch and returns the epoch number.
 // Callers must call ExitEpoch with the returned epoch when done.

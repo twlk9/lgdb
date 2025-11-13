@@ -16,16 +16,17 @@ func advanceEpoch() {
 func TestBasicEpochOperations(t *testing.T) {
 	// Reset global manager for clean test
 	globalManager = &GlobalEpochManager{}
+	globalManager.currentEpoch.Store(1) // Start at epoch 1
 
 	// Test entering and exiting epochs
 	epoch1 := EnterEpoch()
-	if epoch1 != 0 {
-		t.Errorf("Expected first epoch to be 0, got %d", epoch1)
+	if epoch1 != 1 {
+		t.Errorf("Expected first epoch to be 1, got %d", epoch1)
 	}
 
 	epoch2 := EnterEpoch()
-	if epoch2 != 0 {
-		t.Errorf("Expected second epoch to still be 0, got %d", epoch2)
+	if epoch2 != 1 {
+		t.Errorf("Expected second epoch to still be 1, got %d", epoch2)
 	}
 
 	ExitEpoch(epoch1)
