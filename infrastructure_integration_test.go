@@ -597,7 +597,7 @@ func TestFileCache(t *testing.T) {
 	}
 
 	// Now test the file cache with epoch protection
-	blockCache := sstable.NewBlockCache(1 * MiB)
+	blockCache := sstable.NewBlockCache(1*MiB, nil)
 	defer blockCache.Close()
 	cache := NewFileCache(2, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))) // Small cache size for testing
 	defer cache.Close()
@@ -722,7 +722,7 @@ func TestFileCacheEviction(t *testing.T) {
 	}
 
 	// Create cache with capacity of 2
-	blockCache := sstable.NewBlockCache(1 * MiB)
+	blockCache := sstable.NewBlockCache(1*MiB, nil)
 	defer blockCache.Close()
 	cache := NewFileCache(2, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	defer cache.Close()
@@ -798,7 +798,7 @@ func TestFileCacheEpochBased(t *testing.T) {
 	}
 
 	// Create cache with capacity of 1
-	blockCache := sstable.NewBlockCache(1 * MiB)
+	blockCache := sstable.NewBlockCache(1*MiB, nil)
 	defer blockCache.Close()
 	cache := NewFileCache(1, blockCache, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})))
 	defer cache.Close()

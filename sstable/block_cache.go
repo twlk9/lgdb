@@ -22,6 +22,7 @@ type blockCacheShard struct {
 	size     int64
 	cache    map[uint64]*cacheEntry
 	lru      *list.List
+	onEvict  func(value []byte)
 }
 
 // cacheEntry holds the cached block data and its LRU list element.
@@ -33,7 +34,7 @@ type cacheEntry struct {
 
 // NewBlockCache creates a new block cache with the specified capacity in bytes.
 // The capacity is distributed across a number of shards to reduce lock contention.
-func NewBlockCache(capacity int64) *BlockCache {
+func NewBlockCache(capacity int64, onEvict func(value []byte)) *BlockCache {
 	if capacity <= 0 {
 		return &BlockCache{} // Cache is disabled
 	}
@@ -50,6 +51,7 @@ func NewBlockCache(capacity int64) *BlockCache {
 			capacity: shardCapacity,
 			cache:    make(map[uint64]*cacheEntry),
 			lru:      list.New(),
+			onEvict:  onEvict,
 		}
 	}
 
@@ -98,11 +100,17 @@ func (bc *BlockCache) Put(key uint64, value []byte) {
 
 	// If item is larger than the entire shard capacity, don't cache it.
 	if itemSize > shard.capacity {
+		if shard.onEvict != nil {
+			shard.onEvict(value)
+		}
 		return
 	}
 
 	// If item already exists, update it.
 	if entry, exists := shard.cache[key]; exists {
+		if shard.onEvict != nil && &entry.value[0] != &value[0] {
+			shard.onEvict(entry.value)
+		}
 		shard.size += itemSize - int64(len(entry.value))
 		entry.value = value
 		shard.lru.MoveToFront(entry.element)
@@ -139,7 +147,12 @@ func (bc *BlockCache) Close() {
 
 	for _, shard := range bc.shards {
 		shard.mu.Lock()
-		shard.cache = nil
+		for k, v := range shard.cache {
+			if shard.onEvict != nil {
+				shard.onEvict(v.value)
+			}
+			delete(shard.cache, k)
+		}
 		shard.lru = nil
 		shard.size = 0
 		shard.mu.Unlock()
@@ -159,6 +172,9 @@ func (s *blockCacheShard) evictLRU() {
 		entry := s.lru.Remove(elem).(*cacheEntry)
 		delete(s.cache, entry.key)
 		s.size -= int64(len(entry.value))
+		if s.onEvict != nil {
+			s.onEvict(entry.value)
+		}
 	}
 }
 

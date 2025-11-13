@@ -1,6 +1,11 @@
 package compression
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/zstd"
+)
 
 // Type represents different compression algorithms
 type Type uint8
@@ -304,6 +309,35 @@ func CompressBlock(compressor Compressor, dst, src []byte) ([]byte, uint8, error
 		return compressed, BlockS2, nil
 	default:
 		return compressed, BlockNone, nil
+	}
+}
+
+// EstimateDecompressedSize estimates the decompressed size of a block
+func EstimateDecompressedSize(src []byte, compressionType uint8) (int, error) {
+	switch compressionType {
+	case BlockNone:
+		return len(src), nil
+	case BlockSnappy:
+		// Snappy does not provide a way to estimate decompressed size without decompressing
+		// We'll return a heuristic. This might lead to reallocations, but it's better than a fixed guess.
+		// A common heuristic is 3x expansion, but it can vary.
+		return len(src) * 3, nil
+	case BlockZstd:
+		var header zstd.Header
+		// Use a bytes.Reader to allow zstd.Header.Decode to read from the src byte slice
+		err := header.Decode(src)
+		if err != nil {
+			return 0, fmt.Errorf("failed to decode zstd header: %w", err)
+		}
+		if header.HasFCS {
+			return int(header.FrameContentSize), nil
+		}
+		// If FrameContentSize is not available, return a heuristic
+		return len(src) * 3, nil
+	case BlockS2:
+		return s2.DecodedLen(src)
+	default:
+		return 0, fmt.Errorf("unknown compression type: %d", compressionType)
 	}
 }
 

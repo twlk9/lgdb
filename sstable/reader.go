@@ -185,7 +185,12 @@ func (r *SSTableReader) readFooter() error {
 	}
 
 	// Decompress the index block data
-	decompressedIndexData, err := compression.DecompressBlock(nil, indexBlockData, compressionType)
+	estimatedSize, err := compression.EstimateDecompressedSize(indexBlockData, compressionType)
+	if err != nil {
+		return fmt.Errorf("failed to estimate decompressed size for index block: %w", err)
+	}
+	decompressedIndexData := make([]byte, estimatedSize)
+	decompressedIndexData, err = compression.DecompressBlock(decompressedIndexData, indexBlockData, compressionType)
 	if err != nil {
 		return fmt.Errorf("failed to decompress index block: %w", err)
 	}
@@ -407,15 +412,38 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle, noBlockCache bool) (*B
 	}
 
 	// Decompress the block data
-	decompressedData, err := compression.DecompressBlock(nil, blockData, compressionType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decompress block: %w", err)
+	var decompressedData []byte
+	if r.blockCache != nil && !noBlockCache {
+		// Use buffer pool only when caching, so we can release the buffer on eviction.
+		// Estimate the decompressed size for more accurate buffer allocation.
+		estimatedSize, err := compression.EstimateDecompressedSize(blockData, compressionType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to estimate decompressed size: %w", err)
+		}
+		decompressedBuf := bufferpool.GetBuffer(estimatedSize)
+		var err2 error
+		decompressedData, err2 = compression.DecompressBlock(decompressedBuf, blockData, compressionType)
+		if err2 != nil {
+			bufferpool.PutBuffer(decompressedBuf)
+			return nil, fmt.Errorf("failed to decompress block: %w", err2)
+		}
+		// If the decompressor allocated a new buffer, return ours to the pool.
+		if len(decompressedData) > 0 && len(decompressedBuf) > 0 && &decompressedData[0] != &decompressedBuf[0] {
+			bufferpool.PutBuffer(decompressedBuf)
+		}
+	} else {
+		// Not caching, so don't use the pool to avoid leaking the buffer.
+		var err error
+		decompressedData, err = compression.DecompressBlock(nil, blockData, compressionType)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decompress block: %w", err)
+		}
 	}
 
 	// 3. Put decompressed data into cache
 	if r.blockCache != nil && !noBlockCache {
 		// We cache the decompressed data, as decompression can be expensive.
-		// A defensive copy is made by the cache itself if needed.
+		// The onEvict callback will return the buffer to the pool.
 		r.blockCache.Put(cacheKey, decompressedData)
 	}
 

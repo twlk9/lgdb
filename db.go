@@ -191,7 +191,9 @@ func Open(opts *Options) (*DB, error) {
 		options:    opts,
 		path:       opts.Path,
 		logger:     logger,
-		blockCache: sstable.NewBlockCache(opts.BlockCacheSize),
+		blockCache: sstable.NewBlockCache(opts.BlockCacheSize, func(value []byte) {
+			bufferpool.PutBuffer(value)
+		}),
 	}
 
 	db.fileCache = NewFileCache(opts.GetFileCacheSize(), db.blockCache, logger)

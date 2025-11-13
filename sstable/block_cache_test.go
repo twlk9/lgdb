@@ -8,7 +8,7 @@ import (
 )
 
 func TestBlockCache_BasicPutGet(t *testing.T) {
-	cache := NewBlockCache(1024) // 1KB cache
+	cache := NewBlockCache(1024, nil) // 1KB cache
 	defer cache.Close()
 
 	key := GenerateCacheKey(1, 0)
@@ -34,7 +34,7 @@ func TestBlockCache_BasicPutGet(t *testing.T) {
 
 func TestBlockCache_ItemLargerThanShardCapacity(t *testing.T) {
 	cacheSize := int64(100)
-	cache := NewBlockCache(cacheSize) // shardCapacity will be 25
+	cache := NewBlockCache(cacheSize, nil) // shardCapacity will be 25
 	defer cache.Close()
 
 	key := GenerateCacheKey(1, 0)
@@ -53,7 +53,7 @@ func TestBlockCache_LRUEviction(t *testing.T) {
 	numItemsToCache := int(cacheSize / itemSize)
 	numItemsToAdd := numItemsToCache + 500 // Add 500 more to force eviction
 
-	cache := NewBlockCache(cacheSize)
+	cache := NewBlockCache(cacheSize, nil)
 	defer cache.Close()
 
 	// Add items to fill and exceed the cache capacity
@@ -87,7 +87,7 @@ func TestBlockCache_LRUEviction(t *testing.T) {
 }
 
 func TestBlockCache_ConcurrentAccess(t *testing.T) {
-	cache := NewBlockCache(10 * 1024 * 1024) // 10MB cache
+	cache := NewBlockCache(10*1024*1024, nil) // 10MB cache
 	defer cache.Close()
 
 	var wg sync.WaitGroup
