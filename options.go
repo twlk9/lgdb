@@ -29,7 +29,6 @@ var (
 	DefaultBlockRestartInterval               = 16
 	DefaultBlockMinEntries                    = 4
 	DefaultMaxManifestFileSize          int64 = 256 * MiB
-	DefaultWALSyncInterval                    = 500 * time.Millisecond
 	DefaultWALMinSyncInterval                 = 500 * time.Microsecond
 	DefaultCompactionOverlapThreshold         = 4.0  // Expand selection if overlaps > 4x input size
 	DefaultCompactionMaxExpansionFiles        = 20   // Expand up to 20 files
@@ -207,7 +206,6 @@ func DefaultOptions() *Options {
 		CreateIfMissing:              true,
 		ErrorIfExists:                false,
 		Sync:                         true, // Change to true for safety by default
-		WALSyncInterval:              DefaultWALSyncInterval,
 		WALMinSyncInterval:           DefaultWALMinSyncInterval,
 		ReadOnly:                     false,
 		DisableWAL:                   false,

@@ -16,7 +16,6 @@ func TestWALSizeTrackingWithBytesPerSync(t *testing.T) {
 	opts := WALOpts{
 		Path:            dir,
 		FileNum:         1,
-		SyncInterval:    0,
 		MinSyncInterval: 0,
 		BytesPerSync:    1024, // Sync every 1KB
 	}
@@ -91,7 +90,6 @@ func TestWALRotationWithBytesPerSync(t *testing.T) {
 	opts := WALOpts{
 		Path:            dir,
 		FileNum:         1,
-		SyncInterval:    0,
 		MinSyncInterval: 0,
 		BytesPerSync:    512, // Small sync threshold
 	}

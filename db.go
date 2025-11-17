@@ -188,9 +188,9 @@ func Open(opts *Options) (*DB, error) {
 	}
 
 	db := &DB{
-		options:    opts,
-		path:       opts.Path,
-		logger:     logger,
+		options: opts,
+		path:    opts.Path,
+		logger:  logger,
 		blockCache: sstable.NewBlockCache(opts.BlockCacheSize, func(value []byte) {
 			bufferpool.PutBuffer(value)
 		}),
@@ -263,7 +263,6 @@ func Open(opts *Options) (*DB, error) {
 		wo := wal.WALOpts{
 			Path:            opts.Path,
 			FileNum:         db.versions.NewFileNumber(),
-			SyncInterval:    opts.WALSyncInterval,
 			MinSyncInterval: opts.WALMinSyncInterval,
 			BytesPerSync:    opts.WALBytesPerSync,
 		}
@@ -459,7 +458,6 @@ func (db *DB) rotateWAL() error {
 		wo := wal.WALOpts{
 			Path:            db.options.Path,
 			FileNum:         currentFileNum,
-			SyncInterval:    db.options.WALSyncInterval,
 			MinSyncInterval: db.options.WALMinSyncInterval,
 			BytesPerSync:    db.options.WALBytesPerSync,
 		}

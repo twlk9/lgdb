@@ -45,7 +45,6 @@ type SyncRequest struct {
 type WALOpts struct {
 	Path            string
 	FileNum         uint64
-	SyncInterval    time.Duration
 	MinSyncInterval time.Duration
 	BytesPerSync    int
 }
@@ -59,7 +58,6 @@ type WAL struct {
 	closed bool
 
 	// Sync timing options
-	syncInterval    time.Duration
 	minSyncInterval time.Duration
 
 	// Background sync options
@@ -91,7 +89,6 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 		path:            walPath,
 		file:            file,
 		writer:          bufio.NewWriter(file),
-		syncInterval:    opts.SyncInterval,
 		minSyncInterval: opts.MinSyncInterval,
 		bytesPerSync:    opts.BytesPerSync,
 		syncQueue:       &walSyncQueue{},
@@ -110,7 +107,6 @@ func Open(path string, syncInt, minSyncInt time.Duration, bytesPerSync int) (*WA
 		path:            path,
 		file:            file,
 		writer:          bufio.NewWriter(file),
-		syncInterval:    syncInt,
 		minSyncInterval: minSyncInt,
 		bytesPerSync:    bytesPerSync,
 		syncQueue:       &walSyncQueue{},

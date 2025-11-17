@@ -15,7 +15,6 @@ func makeOpts(p string, fn uint64, si, msi time.Duration, bs int) WALOpts {
 	return WALOpts{
 		Path:            p,
 		FileNum:         fn,
-		SyncInterval:    si,
 		MinSyncInterval: msi,
 		BytesPerSync:    bs,
 	}
