@@ -63,8 +63,9 @@ type WAL struct {
 	minSyncInterval time.Duration
 
 	// Background sync options
-	bytesPerSync int
-	bytesWritten int64
+	bytesPerSync          int
+	totalBytesWritten     int64 // Total bytes written to WAL file (never reset)
+	bytesWrittenSinceSync int64 // Bytes written since last sync (reset after sync)
 
 	// Sync queue and batching
 	syncQueue      *walSyncQueue
@@ -121,11 +122,11 @@ func (w *WAL) Path() string {
 	return w.path
 }
 
-// Size returns the bytes written
+// Size returns the total bytes written to the WAL file
 func (w *WAL) Size() int64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.bytesWritten
+	return w.totalBytesWritten
 }
 
 // WriteRecord writes a record to the WAL
@@ -183,13 +184,16 @@ func (w *WAL) WriteRecord(record *WALRecord) error {
 		return err
 	}
 
-	// Track bytes written for background syncing
-	w.bytesWritten += int64(n)
+	// Track total bytes written (for WAL rotation)
+	w.totalBytesWritten += int64(n)
+
+	// Track bytes written since last sync (for background syncing)
+	w.bytesWrittenSinceSync += int64(n)
 
 	// Check if we should trigger background sync
-	if w.bytesPerSync > 0 && w.bytesWritten >= int64(w.bytesPerSync) {
+	if w.bytesPerSync > 0 && w.bytesWrittenSinceSync >= int64(w.bytesPerSync) {
 		// Reset counter and trigger async sync in background
-		w.bytesWritten = 0
+		w.bytesWrittenSinceSync = 0
 		go func() {
 			_ = w.SyncAsync()
 		}()
