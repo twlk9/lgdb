@@ -93,6 +93,9 @@ type DB struct {
 	// Database options
 	options *Options
 
+	// Default write options (derived from options.Sync)
+	defaultWriteOpts *WriteOptions
+
 	// Directory path
 	path string
 
@@ -188,9 +191,10 @@ func Open(opts *Options) (*DB, error) {
 	}
 
 	db := &DB{
-		options: opts,
-		path:    opts.Path,
-		logger:  logger,
+		options:          opts,
+		defaultWriteOpts: &WriteOptions{Sync: opts.Sync},
+		path:             opts.Path,
+		logger:           logger,
 		blockCache: sstable.NewBlockCache(opts.BlockCacheSize, func(value []byte) {
 			bufferpool.PutBuffer(value)
 		}),
@@ -478,7 +482,7 @@ func (db *DB) rotateWAL() error {
 // Uses read-write locks to prevent WAL/memtable rotation during writes.
 func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error {
 	if opts == nil {
-		opts = DefaultWriteOptions()
+		opts = db.defaultWriteOpts
 	}
 	if !keys.IsValidUserKey(key) {
 		return ErrInvalidKey
@@ -555,17 +559,18 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 }
 
 // Put inserts a key-value pair into the database using default write options.
-// Uses synchronous writes by default for safety.
+// Uses the database's default sync setting (from Options.Sync).
 // Writes to WAL first, then memtable, and triggers flush if memtable is full.
 func (db *DB) Put(key, value []byte) error {
-	return db.PutWithOptions(key, value, DefaultWriteOptions())
+	return db.PutWithOptions(key, value, db.defaultWriteOpts)
 }
 
 // PutWithOptions inserts a key-value pair with specified write options.
 // The write options control sync behavior - whether we wait for WAL to hit disk.
+// If opts is nil, uses the database's default sync setting (from Options.Sync).
 func (db *DB) PutWithOptions(key, value []byte, opts *WriteOptions) error {
 	if opts == nil {
-		opts = DefaultWriteOptions()
+		opts = db.defaultWriteOpts
 	}
 
 	return db.write(key, value, keys.KindSet, opts)
@@ -601,10 +606,9 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 
 // Delete removes a key from the database.
 // Writes a tombstone to WAL and memtable. The key is cleaned up during compaction.
+// Uses the database's default sync setting (from Options.Sync).
 func (db *DB) Delete(key []byte) error {
-	// TODO: Make the write options an arg
-	opts := DefaultWriteOptions()
-	return db.write(key, nil, keys.KindDelete, opts)
+	return db.write(key, nil, keys.KindDelete, db.defaultWriteOpts)
 }
 
 // DeleteRange removes all keys in the range [startKey, endKey) from the database.
