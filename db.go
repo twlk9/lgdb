@@ -892,7 +892,7 @@ func (db *DB) WaitForCompaction() {
 
 	// This is a bit complex. It triggers a compaction and waits, but also re-triggers
 	// if L0 is still overloaded, to handle cascading compactions.
-	for i := 0; i < 3; i++ { // Loop a few times to be sure.
+	for i := range 3 { // Loop a few times to be sure.
 		version := db.versions.GetCurrentVersion()
 		l0Overloaded := len(version.GetFiles(0)) >= db.options.L0CompactionTrigger
 		version.MarkForCleanup()
@@ -968,7 +968,7 @@ func (db *DB) CompactAll() error {
 		return ErrDBClosed
 	}
 
-	for i := 0; i < 100; i++ { // Safety break after 100 rounds.
+	for i := range 100 { // Safety break after 100 rounds.
 		version := db.versions.GetCurrentVersion()
 		compactions := db.compactionManager.pickCompaction(version)
 		version.MarkForCleanup()

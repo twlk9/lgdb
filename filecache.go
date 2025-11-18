@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/sstable"
 )
 

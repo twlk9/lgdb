@@ -198,7 +198,6 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 		if len(v.GetFiles(0)) < cm.options.L0StopWritesTrigger {
 			cm.flushBP.Broadcast() // Wake up any waiting writers.
 		}
-		v.MarkForCleanup()
 	}
 
 	return nil
@@ -703,7 +702,6 @@ func (ci *compactionIterator) Close() error {
 // cleanupObsoleteRangeDeletes scans for range deletes that no longer cover any data and removes them.
 func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 	version := cm.versions.GetCurrentVersion()
-	defer version.MarkForCleanup()
 	if version == nil {
 		return
 	}

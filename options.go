@@ -357,7 +357,7 @@ func (o *Options) TargetFileSize(level int) int64 {
 
 	// Higher levels grow exponentially.
 	size := float64(o.WriteBufferSize)
-	for i := 0; i < level; i++ {
+	for range level {
 		size *= o.LevelFileSizeMultiplier
 	}
 	return int64(size)
