@@ -3,6 +3,7 @@ package lgdb
 import (
 	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/keys"
+	"github.com/twlk9/lgdb/memtable"
 )
 
 // Iterator provides an interface for iterating over key-value pairs in forward order.
@@ -38,8 +39,9 @@ type DBIterator struct {
 	valid     bool
 	err       error
 	bounds    *keys.Range
-	version   *Version // Hold reference to version to prevent file deletion
-	epochNum  uint64   // Epoch number for file protection
+	version   *Version             // Hold reference to version to prevent file deletion
+	epochNum  uint64               // Epoch number for file protection
+	memtables []*memtable.MemTable // Memtables referenced for this iterator
 }
 
 // NewIterator creates a new database iterator.
@@ -69,8 +71,13 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 		opts = DefaultReadOptions()
 	}
 
+	// get list of memtables
+	db.mu.RLock()
+	memtables := memtable.RefMemTableList(db.memtable, db.immutableMemtables)
+	db.mu.RUnlock()
+
 	// Count iterators needed: memtables + overlapping SSTable files
-	expectedIterators := len(version.memtables)
+	expectedIterators := len(memtables)
 	for level := 0; level < len(version.files); level++ {
 		files := version.GetFiles(level)
 		for _, file := range files {
@@ -91,7 +98,7 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 	rangeDeletes = append(rangeDeletes, version.GetRangeDeletes()...)
 
 	// Scan memtables for range delete entries
-	for _, mt := range version.memtables {
+	for _, mt := range memtables {
 		mtIter := mt.NewIterator()
 		for mtIter.SeekToFirst(); mtIter.Valid(); mtIter.Next() {
 			key := mtIter.Key()
@@ -112,7 +119,7 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 	mergeIter.SetRangeDeletes(rangeDeletes)
 
 	// Add memtable iterators
-	for _, memtable := range version.memtables {
+	for _, memtable := range memtables {
 		iter := memtable.NewIterator()
 		mergeIter.AddIterator(iter) // Negative levels: -1, -2, -3...
 	}
@@ -151,6 +158,7 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 		bounds:    bounds,
 		version:   version,
 		epochNum:  epochNum,
+		memtables: memtables,
 	}
 }
 
@@ -238,6 +246,9 @@ func (it *DBIterator) Close() error {
 		it.version.MarkForCleanup()
 		it.version = nil
 	}
+
+	// Release the memtableds
+	memtable.UnRefMemTableList(it.memtables)
 
 	return nil
 }

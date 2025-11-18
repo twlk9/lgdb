@@ -645,7 +645,7 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 	sortWALFiles(walFiles)
 
 	var maxSeq uint64
-	for _, walFile := range walFiles {
+	for i, walFile := range walFiles {
 		reader, err := wal.NewWALReader(walFile)
 		if err != nil {
 			// If a WAL file is corrupt, we might be able to tolerate it, but for now, we fail.
@@ -655,15 +655,37 @@ func (db *DB) recoverFromWAL() (uint64, error) {
 
 		db.memtable.RegisterWAL(reader.Path())
 
+		recordCount := 0
 		for {
 			record, err := reader.ReadRecord()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
-					break // End of file.
+					break // Normal end of file
 				}
-				return 0, err // Corrupt record.
+
+				// Handle unexpected EOF or corruption
+				isLastWAL := i == len(walFiles)-1
+				if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, wal.ErrCorruptRecord) {
+					if isLastWAL {
+						// Tolerate corruption at the tail of the last WAL file
+						// This is common when a crash occurs during a write
+						db.logger.Warn("WAL truncated at end - likely crash during write",
+							"file", filepath.Base(walFile),
+							"records_recovered", recordCount,
+							"error", err)
+						break // Stop processing this WAL and continue
+					} else {
+						// Corruption in a non-final WAL is suspicious
+						return 0, fmt.Errorf("WAL corruption in non-final file %s (recovered %d records): %w - manual intervention required",
+							filepath.Base(walFile), recordCount, err)
+					}
+				}
+
+				// Other errors are fatal
+				return 0, fmt.Errorf("WAL read error in %s: %w", filepath.Base(walFile), err)
 			}
 
+			recordCount++
 			if record.Seq > maxSeq {
 				maxSeq = record.Seq
 			}
@@ -981,13 +1003,9 @@ func (db *DB) CompactAll() error {
 		}
 
 		db.compactionManager.ScheduleCompaction()
-		select {
-		case err := <-db.compactionManager.doneChan:
-			if err != nil {
-				return fmt.Errorf("compaction failed on round %d: %w", i, err)
-			}
-		case <-time.After(60 * time.Second):
-			return fmt.Errorf("compaction timed out on round %d", i)
+		err := <-db.compactionManager.doneChan
+		if err != nil {
+			return fmt.Errorf("compaction failed on round %d: %w", i, err)
 		}
 	}
 	return nil

@@ -31,9 +31,6 @@ type Version struct {
 	// Files at each level (L0, L1, L2, ...)
 	files [][](*FileMetadata)
 
-	// Memtables snapshot (active + immutable) - NEW
-	memtables []*memtable.MemTable
-
 	// Sequence number for this version snapshot - NEW
 	seqNum uint64
 
@@ -58,7 +55,6 @@ func NewVersion(numLevels int) *Version {
 
 	version := &Version{
 		files:        make([][](*FileMetadata), numLevels),
-		memtables:    make([]*memtable.MemTable, 0), // Initialize empty slice
 		rangeDeletes: make([]RangeTombstone, 0),
 		resourceID:   resourceID,
 	}
@@ -66,16 +62,6 @@ func NewVersion(numLevels int) *Version {
 	// Enter epoch and hold it for the lifetime of this version as current
 	// This prevents cleanup while version is current and being accessed
 	version.epochNum = epoch.EnterEpoch()
-
-	// Register cleanup function for when version becomes non-current
-	epoch.RegisterResource(resourceID, version.epochNum, func() error {
-		// Cleanup function: release memtable references
-		// NOTE: cleanedUp flag is now managed by MarkForCleanup() to prevent double ExitEpoch()
-		// Clear memtable references to allow garbage collection
-		version.memtables = nil
-		return nil
-	})
-
 	return version
 }
 
@@ -531,7 +517,6 @@ func (vs *VersionSet) CreateVersionSnapshot(memtables []*memtable.MemTable, seqN
 
 	// Create a new version using epoch-based constructor
 	newVersion := NewVersion(len(vs.current.files))
-	newVersion.memtables = memtables
 	newVersion.seqNum = seqNum
 	newVersion.number = vs.nextVersionNum // Unique version number
 	vs.nextVersionNum++
@@ -636,16 +621,26 @@ func (vs *VersionSet) cleanupOldVersions() {
 	totalMemtables := 0
 	removedMemtables := 0
 
+	activeVersions := 0
 	for _, version := range vs.versions {
-		memtableCount := len(version.memtables)
-		totalMemtables += memtableCount
-
 		if atomic.LoadInt32(&version.cleanedUp) == 1 {
 			removedCount++
-			removedMemtables += memtableCount
 			continue // Skip this version - don't add to new slice
 		}
 		newVersions = append(newVersions, version)
+		activeVersions++
+	}
+
+	// Log details about remaining versions for debugging
+	if activeVersions > 1 {
+		var versionEpochs []uint64
+		for _, v := range newVersions {
+			versionEpochs = append(versionEpochs, v.epochNum)
+		}
+		vs.logger.Debug("multiple versions active",
+			"count", activeVersions,
+			"epochs", versionEpochs,
+			"oldest_active_epoch", epoch.GetOldestActiveReadEpoch())
 	}
 
 	vs.versions = newVersions

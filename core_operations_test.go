@@ -371,10 +371,6 @@ func TestMemtableRotation(t *testing.T) {
 	// With the new architecture, we always have exactly one memtable in the version
 	e := epoch.EnterEpoch()
 	defer epoch.ExitEpoch(e)
-	version := db.loadCurrentVersion()
-	if len(version.memtables) != 1 {
-		t.Fatalf("Expected exactly one memtable in version, got %d", len(version.memtables))
-	}
 
 	// Add data that should trigger rotation
 	largeValue := make([]byte, 100)

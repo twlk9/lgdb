@@ -3,6 +3,7 @@ package wal
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -27,6 +28,9 @@ const (
 // CRC32 table using the same polynomial as the original implementation (0xEDB88320)
 // This ensures compatibility while using the optimized standard library implementation
 var crc32Table = crc32.MakeTable(0xEDB88320)
+
+// ErrCorruptRecord indicates a WAL record failed checksum validation
+var ErrCorruptRecord = errors.New("WAL record corrupt: checksum mismatch")
 
 // WALRecord represents a WAL record
 type WALRecord struct {
@@ -407,7 +411,7 @@ func (r *WALReader) ReadRecord() (*WALRecord, error) {
 	// Verify checksum
 	calculatedChecksum := crc32.Checksum(buf[4:], crc32Table) // Skip checksum field
 	if checksum != calculatedChecksum {
-		return nil, fmt.Errorf("checksum mismatch")
+		return nil, ErrCorruptRecord
 	}
 
 	// Read sequence number

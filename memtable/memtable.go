@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/keys"
@@ -29,6 +30,7 @@ type MemTable struct {
 	n         int
 	keyBuf    []byte // reusable buffer for key encoding
 	epoch     uint64 // Tracking for WAL lifetime management
+	refs      int32
 }
 
 func NewMemtable(writeBufferSize int) *MemTable {
@@ -44,6 +46,7 @@ func NewMemtable(writeBufferSize int) *MemTable {
 		d:         make([]byte, 0, writeBufferSize),
 		md:        make([]int, 4+tMaxHeight, estimatedMdCapacity),
 		keyBuf:    make([]byte, 0, 256), // Initial capacity for typical key sizes
+		refs:      1,                    // DB will hold initial ref
 	}
 	mt.md[posHeight] = tMaxHeight
 	mt.epoch = epoch.EnterEpoch()
@@ -176,125 +179,22 @@ func (mt *MemTable) RegisterWAL(path string) {
 // Close marks the epoch as finished. Should trigger any WAL cleanup
 // once all references have completed.
 func (mt *MemTable) Close() {
+	mt.UnRef() // shouldn't destroy it if there is a reference still
 	epoch.ExitEpoch(mt.epoch)
 }
 
-// MemTableIterator represents an iterator over the memtable.
-type MemTableIterator struct {
-	mt     *MemTable
-	node   int         // Current node index (0 = invalid/before first)
-	bounds *keys.Range // Optional iteration bounds
-	key    keys.EncodedKey
-	value  []byte
-	err    error
+func (m *MemTable) Ref() {
+	atomic.AddInt32(&m.refs, 1)
 }
 
-// NewIterator creates a new iterator over the memtable.
-func (mt *MemTable) NewIterator() *MemTableIterator {
-	return &MemTableIterator{
-		mt:     mt,
-		node:   0, // Invalid position initially
-		bounds: nil,
+func (m *MemTable) UnRef() {
+	if atomic.AddInt32(&m.refs, -1) == 0 {
+		m.Destroy()
 	}
 }
 
-// NewIteratorWithBounds creates a new iterator with specified bounds.
-func (mt *MemTable) NewIteratorWithBounds(bounds *keys.Range) *MemTableIterator {
-	it := mt.NewIterator()
-	it.bounds = bounds
-	return it
-}
-
-func (it *MemTableIterator) fill(start, limit bool) bool {
-	if it.node != 0 {
-		n := it.mt.md[it.node]
-		m := n + it.mt.md[it.node+posKey]
-		it.key = it.mt.d[n:m]
-		if it.bounds != nil {
-			switch {
-			case limit && it.bounds.Limit != nil && it.key.Compare(it.bounds.Limit) >= 0:
-				it.node = 0
-				it.value = nil
-				return false
-			case start && it.bounds.Start != nil && it.key.Compare(it.bounds.Start) < 0:
-				it.value = it.mt.d[m : m+it.mt.md[it.node+posVal]]
-				it.node = 0
-				it.value = nil
-				return false
-			}
-		}
-		it.value = it.mt.d[m : m+it.mt.md[it.node+posVal]]
-		return true
-	}
-	it.key = nil
-	it.value = nil
-	return false
-}
-
-// SeekToFirst positions the iterator at the first element.
-func (it *MemTableIterator) SeekToFirst() {
-	it.mt.mu.Lock()
-	defer it.mt.mu.Unlock()
-
-	if it.bounds != nil && it.bounds.Start != nil {
-		it.node, _ = it.mt.findGE(it.bounds.Start, false)
-	} else {
-		it.node = it.mt.md[posNext]
-	}
-	it.fill(false, true)
-}
-
-// Seek positions the iterator at the first element >= target.
-func (it *MemTableIterator) Seek(target keys.EncodedKey) {
-	it.mt.mu.RLock()
-	defer it.mt.mu.RUnlock()
-	if it.bounds != nil && it.bounds.Start != nil && target.Compare(it.bounds.Start) < 0 {
-		target = it.bounds.Start
-	}
-	it.node, _ = it.mt.findGE(target, false)
-	it.fill(false, true)
-}
-
-// Valid returns true if the iterator is positioned at a valid element.
-func (it *MemTableIterator) Valid() bool {
-	return it.node != 0
-}
-
-// Next moves the iterator to the next element.
-func (it *MemTableIterator) Next() {
-	if it.node == 0 {
-		return // Already invalid
-	}
-	it.mt.mu.RLock()
-	defer it.mt.mu.RUnlock()
-	it.node = it.mt.md[it.node+posNext]
-	it.fill(false, true)
-}
-
-// Key returns the current internal key.
-func (it *MemTableIterator) Key() keys.EncodedKey {
-	return keys.EncodedKey(it.key)
-}
-
-// UserKey returns the current user key.
-func (it *MemTableIterator) UserKey() keys.UserKey {
-	if it.key == nil {
-		return nil
-	}
-	return it.key.UserKey()
-}
-
-// Value returns the current value.
-func (it *MemTableIterator) Value() []byte {
-	return it.value
-}
-
-// Error returns any accumulated error (always nil for memtable iterator).
-func (it *MemTableIterator) Error() error {
-	return it.err
-}
-
-// Close releases any resources held by the iterator.
-func (it *MemTableIterator) Close() error {
-	return nil
+func (m *MemTable) Destroy() {
+	m.d = nil
+	m.md = nil
+	m.keyBuf = nil
 }
