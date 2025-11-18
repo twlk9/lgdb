@@ -196,9 +196,9 @@ func BenchmarkMergeIteratorFullScanLargeInputs(b *testing.B) {
 	}
 }
 
-// BenchmarkMergeIteratorFindMinimum benchmarks the findMinimumIterator operation
-// This is the critical path for each Next() operation
-func BenchmarkMergeIteratorFindMinimum(b *testing.B) {
+// BenchmarkMergeIteratorPeekMinimum benchmarks the peekMinimum operation,
+// which is a critical part of each Next() operation.
+func BenchmarkMergeIteratorPeekMinimum(b *testing.B) {
 	numIterators := 40
 	keysPerIterator := 100
 
@@ -220,13 +220,14 @@ func BenchmarkMergeIteratorFindMinimum(b *testing.B) {
 
 	mi := NewMergeIterator(nil, false, 0, numIterators)
 	mi.iterators = iterators
+	mi.rebuildHeap() // Pre-populate the heap
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for b.Loop() {
-		// Benchmark the findMinimumIterator operation
-		_, _ = mi.findMinimumIterator()
+		// Benchmark the peekMinimum operation
+		_, _ = mi.peekMinimum()
 	}
 }
 

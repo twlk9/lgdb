@@ -2,6 +2,7 @@ package lgdb
 
 import (
 	"container/list"
+	"encoding/binary"
 	"hash/fnv"
 	"log/slog"
 	"os"
@@ -89,16 +90,9 @@ func (fc *FileCache) getShard(fileNum uint64) *fileCacheShard {
 	}
 
 	h := fnv.New64a()
-	h.Write([]byte{
-		byte(fileNum),
-		byte(fileNum >> 8),
-		byte(fileNum >> 16),
-		byte(fileNum >> 24),
-		byte(fileNum >> 32),
-		byte(fileNum >> 40),
-		byte(fileNum >> 48),
-		byte(fileNum >> 56),
-	})
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], fileNum)
+	h.Write(b[:])
 	return fc.shards[h.Sum64()%uint64(len(fc.shards))]
 }
 
@@ -124,8 +118,12 @@ func (fc *FileCache) Get(fileNum uint64, path string) (*CachedReader, error) {
 			return nil, err
 		}
 
-		// File deletion is handled by Version epoch management
-		// FileCache only needs to handle SSTableReader lifecycle
+		// The reader is not cached, so we must schedule its cleanup within the current
+		// epoch to prevent resource leaks. The epoch guard ensures Close() is called
+		// only after the reader is no longer in use by the current operation.
+		epoch.ScheduleCleanup(func() error {
+			return reader.Close()
+		})
 
 		// Create a temporary entry that won't be cached
 		entry := &fileCacheEntry{

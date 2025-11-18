@@ -14,180 +14,180 @@ const (
 	GiB = MiB * 1024
 )
 
-// Default values following LevelDB conventions
+// Default values are your best friends. They're mostly borrowed from LevelDB and
+// are battle-tested for a wide range of workloads. Tweak them when you know why you need to.
 var (
 	DefaultWriteBufferSize                    = 4 * MiB
 	DefaultMaxMemtables                       = 2
 	DefaultLevelSizeMultiplier                = 10.0
-	DefaultLevelFileSizeMultiplier            = 2.0 // Files grow 2x per level (L0->L1->L2->...)
+	DefaultLevelFileSizeMultiplier            = 2.0
 	DefaultMaxLevels                          = 7
 	DefaultL0CompactionTrigger                = 4
 	DefaultL0StopWritesTrigger                = 12
-	DefaultMaxOpenFiles                       = 1000 // Soft limit on file descriptors (used to calculate file cache size)
+	DefaultMaxOpenFiles                       = 1000
 	DefaultBlockSize                          = 4 * KiB
 	DefaultBlockCacheSize               int64 = 8 * MiB
 	DefaultBlockRestartInterval               = 16
 	DefaultBlockMinEntries                    = 4
 	DefaultMaxManifestFileSize          int64 = 256 * MiB
 	DefaultWALMinSyncInterval                 = 500 * time.Microsecond
-	DefaultCompactionOverlapThreshold         = 4.0  // Expand selection if overlaps > 4x input size
-	DefaultCompactionMaxExpansionFiles        = 20   // Expand up to 20 files
-	DefaultCompactionTargetOverlapRatio       = 2.0  // After expansion, aim for <= 2x overlap ratio
-	DefaultRangeDeleteCompactionEnabled       = true // Enable range delete compactions by default
+	DefaultCompactionOverlapThreshold         = 4.0
+	DefaultCompactionMaxExpansionFiles        = 20
+	DefaultCompactionTargetOverlapRatio       = 2.0
+	DefaultRangeDeleteCompactionEnabled       = true
 
-	// File descriptor management constants (following Pebble's approach)
-	NumReservedFiles = 10 // Reserve file descriptors for WAL, manifest, temp files, etc.
-	MinFileCacheSize = 64 // Minimum number of SSTable files to cache regardless of MaxOpenFiles
+	// A few file descriptors are precious and reserved for the WAL, manifest, etc.
+	NumReservedFiles = 10
+	// We always want at least a small file cache, even if MaxOpenFiles is set low.
+	MinFileCacheSize = 64
 )
 
-// Options holds configuration options for the database.
-// Follows LevelDB's design philosophy of keeping things simple.
-// Contains all tunable parameters for database behavior.
+// Options holds all the knobs and dials for tuning the database.
+// Think of this as the control panel.
 type Options struct {
-	// Database path
+	// Path is simply where the database files live on disk.
 	Path string
 
-	// Write buffer size - size of memtable before flush to L0
-	// LevelDB default: 4MB
+	// WriteBufferSize is how big a memtable gets in memory before we flush it to a file.
+	// This is your main knob for controlling memory usage for writes.
+	// Larger -> better throughput for bulk writes, but more RAM used and longer recovery time.
+	// Default: 4MB
 	WriteBufferSize int
 
-	// Maximum number of memtables (active + immutable)
-	// LevelDB default: 2 (one active, one immutable)
+	// MaxMemtables is how many memtables we can have in memory at once.
+	// You'll almost always want 2: one for active writes, and one being flushed to disk.
+	// More can smooth out write stalls but uses more RAM.
+	// Default: 2
 	MaxMemtables int
 
-	// File size multiplier between levels
-	// Files at level N+1 will be this many times larger than level N
-	// L0 files are always the size of a flushed memtable (WriteBufferSize)
-	// L1 files = WriteBufferSize * LevelFileSizeMultiplier
-	// L2 files = L1 size * LevelFileSizeMultiplier, etc.
-	// Default: 2.0 (files double in size each level)
+	// LevelFileSizeMultiplier controls how much bigger SSTable files get at deeper levels.
+	// A value of 2.0 means L2 files are twice as big as L1 files.
+	// Bigger files are more efficient to scan but mean bigger compactions.
+	// Default: 2.0
 	LevelFileSizeMultiplier float64
 
-	// Size multiplier between levels (for total level capacity)
-	// Level N+1 will be this many times larger than Level N
-	// LevelDB default: 10x
+	// LevelSizeMultiplier is the heart of the LSM tree's shape.
+	// It dictates the total size of each level, with L(n+1) being N times larger than L(n).
+	// This exponential growth is why reads are fast—most data is in the last, largest levels.
+	// Default: 10.0 (L1 is ~40MB, L2 is ~400MB, etc.)
 	LevelSizeMultiplier float64
 
-	// Maximum number of levels in the LSM tree
-	// LevelDB default: 7 levels (L0 through L6)
+	// MaxLevels is the maximum number of levels in the LSM tree.
+	// Default: 7 (L0 through L6)
 	MaxLevels int
 
-	// Number of L0 files that trigger compaction
-	// LevelDB default: 4 files
+	// L0CompactionTrigger is the "workhorse" trigger.
+	// Once we have this many files in L0, we kick off a compaction to merge them into L1.
+	// Default: 4
 	L0CompactionTrigger int
 
-	// Number of L0 files that stop writes (backpressure)
-	// LevelDB default: 12 files
+	// L0StopWritesTrigger is the "red alert" trigger.
+	// If L0 gets this backed up, we apply backpressure and pause incoming writes.
+	// This gives compaction a chance to catch up and prevents a death spiral of write amplification.
+	// Default: 12
 	L0StopWritesTrigger int
 
-	// Maximum number of open file descriptors
-	// Used to calculate the SSTable file cache size by reserving
-	// NumReservedFiles for non-SSTable files (WAL, manifest, etc.)
-	// The actual file cache size will be (MaxOpenFiles - NumReservedFiles)
-	// LevelDB default: 1000
+	// MaxOpenFiles is a soft limit on file descriptors, a classic `ulimit -n` consideration.
+	// We use this to size our SSTable file cache, leaving a few FDs for other needs.
+	// Default: 1000
 	MaxOpenFiles int
 
-	// Block size for SSTable blocks
-	// LevelDB default: 4KB
+	// BlockSize is the size of a single data block within an SSTable.
+	// Once written, blocks are the immutable unit of I/O. They're what get loaded into the block cache.
+	// Default: 4KB
 	BlockSize int
 
 	// BlockCacheSize is the total capacity of the block cache in bytes.
-	// LevelDB default: 8MB
+	// This is a big one for read performance. More cache = fewer disk reads.
+	// Default: 8MB
 	BlockCacheSize int64
 
-	// Number of keys between restart points in blocks
-	// LevelDB default: 16
+	// BlockRestartInterval determines how often we store a "restart point" within a block.
+	// These points let us binary search for a key without decompressing the whole block.
+	// Smaller interval -> faster seeks, but more memory overhead per block.
+	// Default: 16
 	BlockRestartInterval int
 
-	// Minimum number of entries per block. To avoid having a block
-	// with a single entry under certain circumstances.
+	// BlockMinEntries prevents creating a block with just a few keys, which can be inefficient.
+	// Default: 4
 	BlockMinEntries int
 
-	// Maximum size of manifest file before rotation
-	// LevelDB default: 64MB
+	// MaxManifestFileSize is how large the MANIFEST file can get before we rotate it.
+	// Default: 256MB
 	MaxManifestFileSize int64
 
-	// Database creation/existence options
+	// CreateIfMissing will create a new database if one doesn't already exist at Path.
 	CreateIfMissing bool
-	ErrorIfExists   bool
+	// ErrorIfExists will cause Open() to fail if a database already exists.
+	ErrorIfExists bool
 
-	// Sync options
-	Sync bool // Sync writes to disk immediately
+	// Sync determines if writes should be immediately flushed to disk.
+	// `true` is safer but slower. `false` is fast but risks data loss on crash.
+	// Default: true (safety first!)
+	Sync bool
 
-	// WAL sync timing options (following pebble design)
-	// WALSyncInterval is the interval between periodic WAL syncs
-	// If 0, syncs happen immediately after writes (when Sync=true)
-	// Default: 0 (immediate sync)
+	// WALSyncInterval is the interval between periodic WAL syncs. Not currently used.
 	WALSyncInterval time.Duration
 
-	// WALMinSyncInterval is the minimum duration between WAL syncs
-	// If WAL syncs are requested faster than this interval, they will be
-	// artificially delayed. This allows batching more operations and
-	// reducing I/O while having minimal impact on throughput.
-	// Default: 0 (no artificial delay)
+	// WALMinSyncInterval is the shortest time we'll wait between WAL syncs.
+	// If writes come in super fast, this lets us batch them into a single `fsync`,
+	// trading a tiny bit of latency for much better throughput.
+	// Default: 500µs
 	WALMinSyncInterval time.Duration
 
-	// Read-only mode
+	// ReadOnly mode, as the name implies, prevents all write operations.
 	ReadOnly bool
 
-	// Disable Write-Ahead Log (for testing/special cases)
+	// DisableWAL turns off the write-ahead log. Great for bulk loading data where you
+	// can tolerate losing data on a crash, but a terrible idea for normal operation.
 	DisableWAL bool
 
-	// WALBytesPerSync sets the number of bytes to write to a WAL before calling
-	// Sync on it in the background. This helps smooth out disk write latencies
-	// and avoids cases where the OS writes a lot of buffered data to disk at once.
-	// Set to 0 to disable background syncing (default behavior).
-	// Following Pebble's approach for better write latency predictability.
+	// WALBytesPerSync triggers a background WAL sync after this many bytes have been written.
+	// This helps smooth out I/O by preventing the OS from buffering too much and then
+	// dumping it all to disk at once, causing a latency spike.
+	// Default: 0 (disabled)
 	WALBytesPerSync int
 
-	// TieredCompression defines per-level compression strategies.
-	// Different levels can use different compression algorithms and settings.
+	// TieredCompression defines per-level compression strategies. The idea is to use
+	// faster compression (like S2) on hot, upper levels and stronger compression
+	// (like Zstd) on cold, lower levels.
 	//
-	// TopLevelCount controls how many levels from the top use TopCompression:
-	// - Levels 0 to TopLevelCount-1 use TopCompression (hot data, frequently compacted)
-	// - Levels TopLevelCount and above use BottomCompression (cold data, stable)
-	// - Set TopLevelCount=0 for uniform compression across all levels
-	//
-	// Common configurations:
-	// - DefaultTieredConfig(): Fast S2 on L0-L2, balanced Zstd on L3+ (recommended)
-	// - UniformFastConfig(): Fast S2 on all levels (write-heavy workloads)
-	// - UniformBestConfig(): Best Zstd on all levels (read-heavy/space-critical)
-	// - AggressiveTieredConfig(): No compression on L0-L2, best Zstd on L3+
+	// - TopLevelCount: How many levels (from L0 up) use the "hot" TopCompression.
+	// - The rest of the levels use the "cold" BottomCompression.
 	TieredCompression *compression.TieredCompressionConfig
 
-	// CompactionOverlapThreshold controls when we expand file selection to reduce overlap.
-	// If overlapping files in the next level are > this ratio of selected input files,
-	// we expand selection to avoid massive write amplification.
-	// Default: 4.0 means "expand if overlaps are > 4x the input size"
-	// Set to 0 to disable overlap-aware expansion (use oldest strategy only).
+	// These are knobs for our "smart" compaction picker. The goal is to avoid "write amplification"
+	// where compacting 1MB of data causes 50MB of data to be rewritten. These settings help the
+	// compactor decide whether to pick a bigger set of files to compact at once to be more
+	// efficient in the long run.
+
+	// CompactionOverlapThreshold: If the next level's overlapping files are N times larger
+	// than the files we're compacting, we expand our selection to include them.
+	// Default: 4.0 (expand if overlaps are > 4x the input size)
 	CompactionOverlapThreshold float64
 
-	// CompactionMaxExpansionFiles is the maximum number of files to include when expanding
-	// selection due to high overlap. Prevents runaway expansion in pathological cases.
+	// CompactionMaxExpansionFiles: A safety valve to prevent the compactor from picking
+	// a ridiculously large set of files to compact.
 	// Default: 20 files
 	CompactionMaxExpansionFiles int
 
-	// CompactionTargetOverlapRatio is the desired overlap ratio we aim for after expansion.
-	// When expanding due to high overlap, we keep adding files until the overlap ratio
-	// drops to this level or we hit expansion limits.
-	// Default: 2.0 means we want overlaps to be at most 2x the input size
+	// CompactionTargetOverlapRatio: When we do expand, we keep adding files until the
+	// overlap ratio drops to this target.
+	// Default: 2.0 (aim for overlaps to be at most 2x the input size)
 	CompactionTargetOverlapRatio float64
 
-	// RangeDeleteCompactionEnabled controls whether to proactively compact ranges
-	// that are affected by range deletions. This helps clear tombstones faster,
-	// reclaim space, and reduce memory pressure from accumulated range deletes.
-	// When enabled, after L0 and size-based compactions are satisfied, the system
-	// will pick the oldest range delete and compact the affected range to eliminate it.
+	// RangeDeleteCompactionEnabled controls whether we run special compactions just to
+	// clean up data deleted by a `DeleteRange` call. This helps reclaim space faster
+	// but adds a bit more background work.
 	// Default: true
 	RangeDeleteCompactionEnabled bool
 
-	// Structured logger
+	// Logger is the structured logger for database events.
 	Logger *slog.Logger
 }
 
-// DefaultOptions returns a new Options struct with sensible defaults
-// following LevelDB conventions.
-// These are battle-tested values that work well for most use cases.
+// DefaultOptions returns a new Options struct with sensible defaults.
+// When in doubt, start with these.
 func DefaultOptions() *Options {
 	opts := &Options{
 		WriteBufferSize:              DefaultWriteBufferSize,
@@ -205,7 +205,7 @@ func DefaultOptions() *Options {
 		MaxManifestFileSize:          DefaultMaxManifestFileSize,
 		CreateIfMissing:              true,
 		ErrorIfExists:                false,
-		Sync:                         true, // Change to true for safety by default
+		Sync:                         true, // Safety first!
 		WALMinSyncInterval:           DefaultWALMinSyncInterval,
 		ReadOnly:                     false,
 		DisableWAL:                   false,
@@ -218,35 +218,30 @@ func DefaultOptions() *Options {
 		Logger:                       DefaultLogger(),
 	}
 
-	// File sizes are now calculated dynamically based on WriteBufferSize and LevelFileSizeMultiplier
-	// L0 files = WriteBufferSize (size of flushed memtable)
-	// L1 files = WriteBufferSize * LevelFileSizeMultiplier
-	// L2 files = L1 size * LevelFileSizeMultiplier, etc.
-
 	return opts
 }
 
-// GetLevelMaxBytes returns the maximum size in bytes for a given level.
-// Level 0 is unlimited (managed by file count triggers).
-// Level N size = TargetFileSize(level) * (LevelSizeMultiplier ^ (N-1))
-// Creates the exponential growth that makes LSM trees work.
+// GetLevelMaxBytes returns the maximum total size for a given level.
+// This is the target we compact down to.
+// L0 is special and managed by file count, not size.
 func (o *Options) GetLevelMaxBytes(level int) int64 {
 	if level == 0 {
-		// L0 is managed by file count, not size
+		// L0's size is unbounded; it's controlled by the number of files.
 		return 0
 	}
 
-	if level <= 0 || level > o.MaxLevels {
+	if level < 1 || level > o.MaxLevels {
 		return 0
 	}
 
-	// Level 1 starts with base size (target file size for L1 * 10)
-	baseSize := o.TargetFileSize(1) * 10 // L1 = ~40MB with 4MB target file size
+	// L1 starts with a base size, typically 10x the target file size.
+	// e.g., 4MB L1 files * 10 = 40MB total size for L1.
+	baseSize := o.TargetFileSize(1) * 10
 	if level == 1 {
 		return baseSize
 	}
 
-	// Each subsequent level is multiplied by LevelSizeMultiplier
+	// Each subsequent level grows by the multiplier.
 	multiplier := 1.0
 	for i := 2; i <= level; i++ {
 		multiplier *= o.LevelSizeMultiplier
@@ -257,10 +252,9 @@ func (o *Options) GetLevelMaxBytes(level int) int64 {
 
 // GetMaxFilesForLevel returns the maximum number of files for a given level.
 // Calculated as LevelMaxBytes / TargetFileSize(level).
-// Used by compaction to decide when a level is "full".
 func (o *Options) GetMaxFilesForLevel(level int) int {
 	if level == 0 {
-		// L0 uses file count triggers instead
+		// L0 is triggered by file count directly.
 		return o.L0CompactionTrigger
 	}
 
@@ -269,11 +263,16 @@ func (o *Options) GetMaxFilesForLevel(level int) int {
 		return 0
 	}
 
-	return int(maxBytes / o.TargetFileSize(level))
+	targetSize := o.TargetFileSize(level)
+	if targetSize == 0 {
+		return 0
+	}
+
+	return int(maxBytes / targetSize)
 }
 
-// Validate checks if the options are valid and returns an error if not.
-// Catches common configuration mistakes that would prevent database operation.
+// Validate checks if the options make sense.
+// Prevents you from shooting yourself in the foot with weird configurations.
 func (o *Options) Validate() error {
 	if o.Path == "" {
 		return ErrInvalidPath
@@ -319,14 +318,10 @@ func (o *Options) Validate() error {
 		return ErrInvalidMaxOpenFiles
 	}
 
-	// FileCacheSize is now automatically calculated from MaxOpenFiles
-	// No separate validation needed
-
 	return nil
 }
 
 // Clone creates a deep copy of the options.
-// Useful when modifying options without affecting the original.
 func (o *Options) Clone() *Options {
 	if o == nil {
 		return DefaultOptions()
@@ -337,52 +332,47 @@ func (o *Options) Clone() *Options {
 }
 
 // FileCacheSize calculates the appropriate file cache size based on max open files.
-// Reserves NumReservedFiles for non-SSTable files (WAL, manifest, etc.) and ensures
-// a minimum cache size. Following Pebble's approach for file descriptor management.
+// It reserves some file descriptors for non-SSTable files (WAL, manifest, etc.).
 func FileCacheSize(maxOpenFiles int) int {
 	fileCacheSize := max(maxOpenFiles-NumReservedFiles, MinFileCacheSize)
 	return fileCacheSize
 }
 
 // GetFileCacheSize returns the calculated file cache size for these options.
-// The number of SSTable files that will be cached based on MaxOpenFiles.
 func (o *Options) GetFileCacheSize() int {
 	return FileCacheSize(o.MaxOpenFiles)
 }
 
 // TargetFileSize returns the target file size for the specified level.
-// L0 files are always the size of a flushed memtable (WriteBufferSize).
-// Higher levels grow by LevelFileSizeMultiplier each level.
+// L0 files are the size of a flushed memtable. Higher levels grow from there.
 func (o *Options) TargetFileSize(level int) int64 {
 	if level < 0 {
-		// Default to L0 size for invalid levels
 		return int64(o.WriteBufferSize)
 	}
 
-	// L0 files are always the size of the memtable
+	// L0 files are always the size of the memtable dump.
 	if level == 0 {
 		return int64(o.WriteBufferSize)
 	}
 
-	// Higher levels grow exponentially
+	// Higher levels grow exponentially.
 	size := float64(o.WriteBufferSize)
-	for range level {
+	for i := 0; i < level; i++ {
 		size *= o.LevelFileSizeMultiplier
 	}
 	return int64(size)
 }
 
 // GetCompressionForLevel returns the appropriate compression config for a given level.
-// Uses TieredCompression configuration to determine which compression strategy to apply.
 func (o *Options) GetCompressionForLevel(level int) compression.Config {
 	if o.TieredCompression != nil {
 		return o.TieredCompression.GetConfigForLevel(level)
 	}
-	// Fallback: should not happen with proper initialization
+	// Fallback to a sensible default if not configured.
 	return compression.S2DefaultConfig()
 }
 
-// Helpful Logger functions
+// A few helper functions to get a logger instance.
 func getLogger(level slog.Level) *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }

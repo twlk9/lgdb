@@ -12,7 +12,7 @@ import (
 	"github.com/twlk9/lgdb/sstable"
 )
 
-// CompactionStats tracks compaction statistics
+// CompactionStats tracks what happened during a compaction. Good for logging and debugging.
 type CompactionStats struct {
 	BytesRead    uint64
 	BytesWritten uint64
@@ -21,33 +21,35 @@ type CompactionStats struct {
 	FilesWritten int
 }
 
-// CompactionManager manages the compaction process independently
+// CompactionManager is the background orchestrator for all compaction work.
+// It runs in its own goroutine, waking up when needed, figuring out the most
+// important compaction to run, and then executing it.
 type CompactionManager struct {
-	// Dependencies for doing compaction work
+	// Dependencies to get the job done.
 	versions  *VersionSet
 	fileCache *FileCache
 	path      string
 	options   *Options
 	logger    *slog.Logger
 
-	// Coordination channels
-	wakeupChan chan struct{} // DB signals work needed
-	doneChan   chan error    // CompactionManager signals completion
-	closeChan  chan struct{} // For shutdown
+	// Coordination channels.
+	wakeupChan chan struct{} // The DB pokes this to say "Hey, check for work!"
+	doneChan   chan error    // Signals that a compaction cycle is finished.
+	closeChan  chan struct{} // The signal to shut down.
 
-	// Backpressure signaling
-	flushBP *sync.Cond // Signal when L0 count decreases (for L0 backpressure)
+	// Used to signal writers when L0 backpressure is relieved.
+	flushBP *sync.Cond
 
-	// State
+	// Internal state.
 	closed bool
 	mu     sync.Mutex
-	wg     sync.WaitGroup // Wait for worker goroutine to finish
+	wg     sync.WaitGroup // To wait for the worker to exit gracefully.
 
-	// Level size thresholds for triggering compaction
+	// A cache of the max size for each level, so we don't recalculate it constantly.
 	levelMaxBytes []int64
 }
 
-// NewCompactionManager creates a new compaction manager
+// NewCompactionManager creates and starts a new compaction manager.
 func NewCompactionManager(versions *VersionSet, fileCache *FileCache, path string, options *Options, logger *slog.Logger, flushBP *sync.Cond) *CompactionManager {
 	cm := &CompactionManager{
 		versions:      versions,
@@ -55,45 +57,42 @@ func NewCompactionManager(versions *VersionSet, fileCache *FileCache, path strin
 		path:          path,
 		options:       options,
 		logger:        logger,
-		wakeupChan:    make(chan struct{}, 1), // Buffered to avoid blocking
-		doneChan:      make(chan error, 1),    // Buffered for non-blocking completion signal
+		wakeupChan:    make(chan struct{}, 1), // Buffered so the DB doesn't block sending a signal.
+		doneChan:      make(chan error, 1),    // Buffered for non-blocking completion signals.
 		closeChan:     make(chan struct{}),
 		flushBP:       flushBP,
-		closed:        false,
 		levelMaxBytes: make([]int64, options.MaxLevels),
 	}
 
-	// Set level size thresholds using the options method
 	for i := 0; i < len(cm.levelMaxBytes); i++ {
 		cm.levelMaxBytes[i] = options.GetLevelMaxBytes(i)
 	}
 
-	// Start the compaction worker goroutine
 	cm.wg.Add(1)
 	go cm.compactionWorker()
 
 	return cm
 }
 
-// ScheduleCompaction signals the compaction worker to check for work
+// ScheduleCompaction is the public method to poke the compaction worker.
+// It's non-blocking and safe to call multiple times.
 func (cm *CompactionManager) ScheduleCompaction() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-
 	if cm.closed {
 		return
 	}
 
-	// Send non-blocking signal to wake up the compaction worker
 	select {
 	case cm.wakeupChan <- struct{}{}:
-		// Signal sent
+		// Signal sent.
 	default:
-		// Worker already has a pending signal, no need to queue another
+		// A signal is already pending, no need for another.
 	}
 }
 
-// compactionWorker runs in a single goroutine and performs compaction work
+// compactionWorker is the main loop for the compaction manager. It's a simple
+// "wake up -> check for work -> do work -> sleep" cycle.
 func (cm *CompactionManager) compactionWorker() {
 	defer cm.wg.Done()
 	cm.logger.Info("Compaction worker started")
@@ -105,245 +104,170 @@ func (cm *CompactionManager) compactionWorker() {
 			return
 
 		case <-cm.wakeupChan:
-			cm.logger.Info("Compaction work requested - starting compaction")
+			cm.logger.Info("Compaction work requested - checking for tasks")
 
-			// Grab a fresh current version when we're ready to do work
 			version := cm.versions.GetCurrentVersion()
-			// Pick compaction(s) based on fresh version
 			compactions := cm.pickCompaction(version)
 			if compactions == nil {
-				cm.logger.Debug("No compaction needed")
-				// Signal completion even when no work is needed
+				cm.logger.Debug("No compaction needed right now")
+				version.MarkForCleanup()
+				// Signal completion even if there was no work, in case someone is waiting.
 				select {
 				case cm.doneChan <- nil:
 				default:
 				}
-				version.MarkForCleanup() // Mark version for cleanup when no work needed
 				continue
 			}
 
-			// Process all compactions sequentially
 			var err error
 			for i, compaction := range compactions {
 				if len(compactions) > 1 {
-					cm.logger.Info("Processing compaction batch",
-						"progress", fmt.Sprintf("%d/%d", i+1, len(compactions)),
-						"level", compaction.level)
+					cm.logger.Info("Processing compaction batch", "progress", fmt.Sprintf("%d/%d", i+1, len(compactions)))
 				}
-
-				// Do the actual compaction work
 				err = cm.doCompactionWork(compaction, version)
 				if err != nil {
-					cm.logger.Error("Compaction failed",
-						"error", err,
-						"batchIndex", i,
-						"totalInBatch", len(compactions))
-					break
+					cm.logger.Error("Compaction failed", "error", err)
+					break // Stop the batch on failure.
 				}
-
-				// Check if we need to remove a range delete after this compaction
 				if compaction.rangeDeleteToRemove != 0 {
-					cm.logger.Info("Removing range delete after compaction",
-						"rangeDeleteID", compaction.rangeDeleteToRemove)
+					cm.logger.Info("Removing range delete after compaction", "rangeDeleteID", compaction.rangeDeleteToRemove)
 					cm.removeRangeDelete(compaction.rangeDeleteToRemove)
 				}
 			}
 
-			// Signal completion (non-blocking)
+			version.MarkForCleanup()
 			select {
 			case cm.doneChan <- err:
 			default:
-				// If nobody is listening, that's fine
 			}
-			version.MarkForCleanup()
 		}
 	}
 }
 
-// doCompactionWork performs the complete compaction workflow:
-// 1. Do the compaction
-// 2. Apply version edit
-// 3. Clean up obsolete files
+// doCompactionWork executes a single compaction job from start to finish.
 func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *Version) error {
-	cm.logger.Info("Starting compaction",
-		"level", compaction.level,
-		"outputLevel", compaction.outputLevel,
-		"inputFiles", len(compaction.inputFiles[0])+len(compaction.inputFiles[1]))
-
+	cm.logger.Info("Starting compaction", "level", compaction.level, "outputLevel", compaction.outputLevel)
 	startTime := time.Now()
 
-	// Run the actual compaction
 	edit, err := cm.doCompaction(compaction, version)
 	if err != nil {
 		compaction.Cleanup()
 		return fmt.Errorf("compaction failed: %w", err)
 	}
 
-	// Apply the version edit under proper locking
-	err = cm.versions.LogAndApply(edit)
-	if err != nil {
+	// Apply the changes to the manifest to make the new files live.
+	if err = cm.versions.LogAndApply(edit); err != nil {
 		compaction.Cleanup()
 		return fmt.Errorf("failed to apply compaction version edit: %w", err)
 	}
 
-	// Check for obsolete range deletes and remove them
+	// After a compaction, some range deletes might now be obsolete.
 	cm.cleanupObsoleteRangeDeletes()
 
-	duration := time.Since(startTime)
-	cm.logger.Info("Compaction completed",
-		"level", compaction.level,
-		"outputLevel", compaction.outputLevel,
-		"duration", duration,
-		"bytesRead", 0, // TODO: track bytes
-		"bytesWritten", 0) // TODO: track bytes
-
-	// Clean up compaction
+	cm.logger.Info("Compaction completed", "level", compaction.level, "duration", time.Since(startTime))
 	compaction.Cleanup()
 
-	// If this was an L0 compaction, signal any writes waiting on L0 backpressure
+	// If we just compacted L0, we might have relieved backpressure.
 	if compaction.level == 0 && cm.flushBP != nil {
 		v := cm.versions.GetCurrentVersion()
 		if len(v.GetFiles(0)) < cm.options.L0StopWritesTrigger {
-			cm.flushBP.Broadcast()
+			cm.flushBP.Broadcast() // Wake up any waiting writers.
 		}
+		v.MarkForCleanup()
 	}
 
 	return nil
 }
 
-// pickCompaction selects the best compaction to run using Pebble-style logic.
-// pickCompaction returns a list of compactions to run.
-// Most compactions return a single item, but range delete compactions
-// may return multiple compactions (one per affected level) that should
-// all be executed before the range delete can be safely removed.
+// pickCompaction is the brain. It decides which compaction is the most important
+// to run right now, based on a priority list.
 func (cm *CompactionManager) pickCompaction(version *Version) []*Compaction {
-
-	// Priority 1: Check if L0 needs compaction (most urgent)
-	if compaction := cm.pickL0Compaction(version); compaction != nil {
-		return []*Compaction{compaction}
+	// Priority 1: L0 compaction. This is the most urgent to keep the write path clear.
+	if c := cm.pickL0Compaction(version); c != nil {
+		return []*Compaction{c}
 	}
 
-	// Priority 2: Check if any other level needs compaction
-	if compaction := cm.pickLevelCompaction(version); compaction != nil {
-		return []*Compaction{compaction}
+	// Priority 2: Size-based compaction for other levels.
+	if c := cm.pickLevelCompaction(version); c != nil {
+		return []*Compaction{c}
 	}
 
-	// Priority 3: Check if we can compact to eliminate range deletes
+	// Priority 3: Proactively compact to get rid of range delete tombstones.
 	if cm.options.RangeDeleteCompactionEnabled {
-		if compactions := cm.pickRangeDeleteCompaction(version); compactions != nil {
-			return compactions
+		if cs := cm.pickRangeDeleteCompaction(version); cs != nil {
+			return cs
 		}
 	}
 
-	// No compaction needed
 	return nil
 }
 
-// pickL0Compaction picks an L0->L1 compaction following Pebble's approach.
+// pickL0Compaction checks if L0 has enough files to trigger a compaction into L1.
 func (cm *CompactionManager) pickL0Compaction(version *Version) *Compaction {
 	l0Files := version.GetFiles(0)
 	if len(l0Files) < cm.options.L0CompactionTrigger {
-		return nil // Not enough L0 files to trigger compaction
+		return nil
 	}
 
-	// Select ALL L0 files for compaction - this is more aggressive but simpler
-	// and ensures L0 doesn't grow indefinitely. In LevelDB/RocksDB, they also
-	// compact all L0 files when triggered to avoid repeated small compactions.
+	// Simple strategy: compact ALL L0 files together.
 	selectedL0Files := l0Files
-
-	// Find overlapping L1 files
 	l1Files := cm.findOverlappingFiles(version, 1, selectedL0Files)
 
-	// Create compaction
 	compaction := &Compaction{
 		level:             0,
 		outputLevel:       1,
 		version:           version,
 		inputFiles:        make([][]*FileMetadata, 2),
-		outputFiles:       make([]*FileMetadata, 0),
-		stats:             &CompactionStats{},
 		maxOutputFileSize: cm.options.TargetFileSize(1),
 	}
+	compaction.inputFiles[0] = selectedL0Files
+	compaction.inputFiles[1] = l1Files
 
-	// Set input files
-	compaction.inputFiles[0] = append([]*FileMetadata{}, selectedL0Files...)
-	compaction.inputFiles[1] = append([]*FileMetadata{}, l1Files...)
-
-	// Note: Files are already referenced by being in the version
-	// No need to add additional references here
-
-	cm.logger.Info("PICKED_L0_COMPACTION",
-		"l0Files", cm.getFileNums(selectedL0Files),
-		"l1Files", cm.getFileNums(l1Files),
-		"maxOutputFileSize", compaction.maxOutputFileSize)
-
+	cm.logger.Info("PICKED_L0_COMPACTION", "l0Files", len(selectedL0Files), "l1Overlap", len(l1Files))
 	return compaction
 }
 
-// pickLevelCompaction picks a regular level compaction (L1->L2, L2->L3, etc.).
+// pickLevelCompaction finds the level (L1+) with the highest "compaction score"
+// (i.e., the one that is most oversized) and picks files from it to compact.
 func (cm *CompactionManager) pickLevelCompaction(version *Version) *Compaction {
-	// Find the level with the highest score
-	bestLevel := -1
-	bestScore := 0.0
-
-	for level := 1; level < cm.options.MaxLevels-1; level++ { // Skip L0 and bottom level
+	bestLevel, bestScore := -1, 0.0
+	for level := 1; level < cm.options.MaxLevels-1; level++ {
 		score := cm.calculateLevelScore(level, version)
 		if score >= 1.0 && score > bestScore {
-			bestScore = score
-			bestLevel = level
+			bestScore, bestLevel = score, level
 		}
 	}
 
 	if bestLevel == -1 {
-		return nil // No level needs compaction
+		return nil // No levels need compaction.
 	}
 
-	// Pick files from the level, using overlap-aware expansion
-	levelFiles := version.GetFiles(bestLevel)
-	if len(levelFiles) == 0 {
+	selectedFiles := cm.selectFiles(version, version.GetFiles(bestLevel), bestLevel)
+	if selectedFiles == nil {
 		return nil
 	}
-
-	selectedFiles := cm.selectFiles(version, levelFiles, bestLevel)
-
-	// Find overlapping files in next level
 	overlappingFiles := cm.findOverlappingFiles(version, bestLevel+1, selectedFiles)
 
-	// Create compaction
 	compaction := &Compaction{
 		level:             bestLevel,
 		outputLevel:       bestLevel + 1,
 		version:           version,
 		inputFiles:        make([][]*FileMetadata, 2),
-		outputFiles:       make([]*FileMetadata, 0),
-		stats:             &CompactionStats{},
 		maxOutputFileSize: cm.options.TargetFileSize(bestLevel + 1),
 	}
-
-	// Set input files
 	compaction.inputFiles[0] = selectedFiles
-	compaction.inputFiles[1] = append([]*FileMetadata{}, overlappingFiles...)
+	compaction.inputFiles[1] = overlappingFiles
 
 	return compaction
 }
 
-// findOverlappingFiles finds files in the target level that overlap with the given input files.
+// findOverlappingFiles finds all files in a target level that have key ranges
+// overlapping with a given set of input files.
 func (cm *CompactionManager) findOverlappingFiles(version *Version, targetLevel int, inputFiles []*FileMetadata) []*FileMetadata {
-	if targetLevel >= len(version.files) {
+	if targetLevel >= len(version.files) || len(inputFiles) == 0 {
 		return nil
 	}
 
-	// Guard against empty input files
-	if len(inputFiles) == 0 {
-		return nil
-	}
-
-	targetFiles := version.GetFiles(targetLevel)
-	if len(targetFiles) == 0 {
-		return nil
-	}
-
-	// Find the key range of input files
 	var smallestKey, largestKey keys.EncodedKey
 	for _, file := range inputFiles {
 		if smallestKey == nil || file.SmallestKey.Compare(smallestKey) < 0 {
@@ -353,247 +277,136 @@ func (cm *CompactionManager) findOverlappingFiles(version *Version, targetLevel 
 			largestKey = file.LargestKey
 		}
 	}
-
-	// Guard against nil keys (defensive check)
 	if smallestKey == nil || largestKey == nil {
 		return nil
 	}
 
-	// Find overlapping files in target level
 	var overlapping []*FileMetadata
-	for _, targetFile := range targetFiles {
+	for _, targetFile := range version.GetFiles(targetLevel) {
 		if cm.keyRangesOverlap(smallestKey, largestKey, targetFile.SmallestKey, targetFile.LargestKey) {
 			overlapping = append(overlapping, targetFile)
 		}
 	}
-
 	return overlapping
 }
 
-// keyRangesOverlap checks if two key ranges overlap.
+// keyRangesOverlap is a simple helper to check if [start1, end1] and [start2, end2] overlap.
 func (cm *CompactionManager) keyRangesOverlap(start1, end1, start2, end2 keys.EncodedKey) bool {
-	// Range1: [start1, end1], Range2: [start2, end2]
-	// They overlap if: start1 <= end2 && start2 <= end1
-
-	// Defensive nil checks - should not happen with proper callers but guards against race conditions
 	if start1 == nil || end1 == nil || start2 == nil || end2 == nil {
 		return false
 	}
-
 	return start1.Compare(end2) <= 0 && start2.Compare(end1) <= 0
 }
 
-// getFileNums extracts file numbers for logging.
+// getFileNums is a logging helper to get just the file numbers from a list of metadata.
 func (cm *CompactionManager) getFileNums(files []*FileMetadata) []uint64 {
-	var nums []uint64
-	for _, f := range files {
-		nums = append(nums, f.FileNum)
+	nums := make([]uint64, len(files))
+	for i, f := range files {
+		nums[i] = f.FileNum
 	}
 	return nums
 }
 
-// calculateLevelScore calculates the compaction score for a level.
+// calculateLevelScore determines how "full" a level is. A score >= 1.0 means it's a candidate for compaction.
 func (cm *CompactionManager) calculateLevelScore(level int, version *Version) float64 {
 	files := version.GetFiles(level)
 	if len(files) == 0 {
 		return 0.0
 	}
-
 	if level == 0 {
-		// L0 is scored by file count
 		return float64(len(files)) / float64(cm.options.L0CompactionTrigger)
 	}
-
-	// L1+ is scored by total size
-	totalSize := int64(0)
+	var totalSize int64
 	for _, file := range files {
 		totalSize += int64(file.Size)
 	}
-
 	return float64(totalSize) / float64(cm.levelMaxBytes[level])
 }
 
-// selectFiles selects files for compaction at a specific level, using
-// overlap-aware expansion to reduce write amplification.
+// selectFiles is where we get clever. Instead of just picking the oldest file,
+// we might expand our selection to include more files if it helps reduce future
+// compaction work (i.e., reduces write amplification).
 func (cm *CompactionManager) selectFiles(version *Version, files []*FileMetadata, level int) []*FileMetadata {
-	if len(files) == 0 {
+	if len(files) <= 1 {
 		return nil
 	}
 
-	// Don't compact a level with 1 file
-	if len(files) == 1 {
-		return nil
-	}
-
-	// Sort files by file number to get oldest first
 	sorted := make([]*FileMetadata, len(files))
 	copy(sorted, files)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].FileNum < sorted[j].FileNum })
 
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].FileNum < sorted[j].FileNum
-	})
-
-	// Calculate target input size based on the output level's target file size
-	outputLevel := level + 1
-	targetOutputFileSize := cm.options.TargetFileSize(outputLevel)
-	targetInputSize := int64(float64(targetOutputFileSize) * 1.2) // 20% overhead
-
-	// Don't go below a reasonable minimum
-	minInputSize := int64(4096)
-	if targetInputSize < minInputSize {
-		targetInputSize = minInputSize
+	// Start by selecting the oldest files.
+	selected := []*FileMetadata{sorted[0]}
+	if len(sorted) > 1 {
+		selected = append(selected, sorted[1])
 	}
 
-	// Select initial set of files targeting the input size
-	selected := []*FileMetadata{}
-	totalSize := int64(0)
-
-	for i, file := range sorted {
-		selected = append(selected, file)
-		totalSize += int64(file.Size)
-
-		// Stop when we have enough data or too many files
-		if totalSize >= targetInputSize || len(selected) >= 8 {
-			break
-		}
-
-		// Always select at least 2 files if available
-		if i >= 1 && totalSize >= targetInputSize/2 {
-			break
-		}
-	}
-
-	// Always have at least 2 files
-	if len(selected) < 2 && len(sorted) >= 2 {
-		selected = sorted[:2]
-	}
-
-	// Now apply overlap-aware expansion: if overlaps are too high, select more files
+	// Now, check if this small selection causes a lot of overlap with the next level.
+	// If so, it's better to expand our selection now to deal with it all at once.
 	if cm.options.CompactionOverlapThreshold > 0 {
 		selected = cm.expandSelection(version, selected, sorted, level)
 	}
 
-	cm.logger.Info("SELECTED_COMPACTION_FILES",
-		"level", level,
-		"inputFiles", len(selected),
-		"totalInputSize", totalSize,
-		"targetInputSize", targetInputSize,
-		"targetOutputFileSize", targetOutputFileSize)
-
+	cm.logger.Info("SELECTED_COMPACTION_FILES", "level", level, "count", len(selected))
 	return selected
 }
 
-// expandSelection checks if selected files have excessive overlaps in
-// the next level. If so, it expands selection to include more files
-// from the current level, spreading the overlap cost and reducing
-// write amplification.
+// expandSelection implements the "smart" part of file selection. If the chosen files
+// overlap heavily with the next level, we add more files from the current level to
+// the compaction. This costs more now but saves a lot of redundant work later.
 func (cm *CompactionManager) expandSelection(version *Version, selected, allSorted []*FileMetadata, level int) []*FileMetadata {
-	// Find overlapping files in next level
 	overlapping := cm.findOverlappingFiles(version, level+1, selected)
 	if len(overlapping) == 0 {
 		return selected
 	}
 
-	// Calculate overlap ratio
-	overlapSize := int64(0)
+	var overlapSize, selectedSize int64
 	for _, f := range overlapping {
 		overlapSize += int64(f.Size)
 	}
-
-	selectedSize := int64(0)
 	for _, f := range selected {
 		selectedSize += int64(f.Size)
 	}
-
 	if selectedSize == 0 {
 		return selected
 	}
 
 	overlapRatio := float64(overlapSize) / float64(selectedSize)
 
-	cm.logger.Debug("Overlap check",
-		"level", level,
-		"selectedFiles", len(selected),
-		"selectedSize", selectedSize,
-		"overlappingFiles", len(overlapping),
-		"overlapSize", overlapSize,
-		"overlapRatio", overlapRatio,
-		"threshold", cm.options.CompactionOverlapThreshold)
-
-	// If overlap ratio exceeds threshold, try to expand selection
+	// If the overlap is too high, start expanding.
 	if overlapRatio > cm.options.CompactionOverlapThreshold {
-		cm.logger.Info("High overlap detected - expanding selection",
-			"level", level,
-			"overlapRatio", overlapRatio,
-			"threshold", cm.options.CompactionOverlapThreshold)
-
-		// Expand files until we reach target overlap ratio or hit limits
-		expanded := make([]*FileMetadata, len(selected))
-		copy(expanded, selected)
-		expandedSize := selectedSize
-
-		// Try adding more files from the sorted list
-		for _, file := range allSorted {
-			// Skip if already in expanded set
-			alreadyIncluded := false
-			for _, e := range expanded {
-				if e.FileNum == file.FileNum {
-					alreadyIncluded = true
-					break
-				}
-			}
-			if alreadyIncluded {
-				continue
-			}
-
-			// Add the file and recalculate
-			expanded = append(expanded, file)
-			expandedSize += int64(file.Size)
-
-			// Recalculate overlaps with expanded selection
+		cm.logger.Info("High overlap detected, expanding selection", "level", level, "ratio", overlapRatio)
+		// Keep adding files until the ratio is acceptable or we hit a limit.
+		for i := len(selected); i < len(allSorted); i++ {
+			expanded := allSorted[:i+1]
 			newOverlapping := cm.findOverlappingFiles(version, level+1, expanded)
-			newOverlapSize := int64(0)
+			var newOverlapSize, newSelectedSize int64
 			for _, f := range newOverlapping {
 				newOverlapSize += int64(f.Size)
 			}
-			newRatio := float64(newOverlapSize) / float64(expandedSize)
+			for _, f := range expanded {
+				newSelectedSize += int64(f.Size)
+			}
+			newRatio := float64(newOverlapSize) / float64(newSelectedSize)
 
-			cm.logger.Debug("Expansion step",
-				"level", level,
-				"expandedFiles", len(expanded),
-				"newRatio", newRatio,
-				"targetRatio", cm.options.CompactionTargetOverlapRatio)
-
-			// Stop if we've achieved target ratio or hit limits
-			if newRatio <= cm.options.CompactionTargetOverlapRatio ||
-				len(expanded) >= cm.options.CompactionMaxExpansionFiles {
+			if newRatio <= cm.options.CompactionTargetOverlapRatio || len(expanded) >= cm.options.CompactionMaxExpansionFiles {
 				return expanded
 			}
-		}
-
-		// Return what we have if we've exhausted the file list
-		if len(expanded) > len(selected) {
-			return expanded
 		}
 	}
 
 	return selected
 }
 
-// pickRangeDeleteCompaction picks compactions to eliminate a range delete tombstone.
-// Strategy: Pick the oldest range delete (lowest sequence number) and create same-level
-// compactions (Lx→Lx) for ALL affected levels. This ensures we process every file that
-// could potentially contain keys in the range delete's scope. After all compactions complete,
-// we can safely remove the range delete from memory.
-// Returns multiple compactions (one per affected level) that should all be run before
-// removing the range delete.
+// pickRangeDeleteCompaction finds the oldest range delete and creates compactions
+// to process all files it might affect. This is a proactive way to reclaim space.
+// It creates *same-level* compactions to rewrite affected files in place.
 func (cm *CompactionManager) pickRangeDeleteCompaction(version *Version) []*Compaction {
 	rangeDeletes := version.GetRangeDeletes()
 	if len(rangeDeletes) == 0 {
 		return nil
 	}
 
-	// Find the oldest range delete (lowest sequence number)
 	var oldestRT *RangeTombstone
 	for i := range rangeDeletes {
 		rt := &rangeDeletes[i]
@@ -601,296 +414,150 @@ func (cm *CompactionManager) pickRangeDeleteCompaction(version *Version) []*Comp
 			oldestRT = rt
 		}
 	}
-
 	if oldestRT == nil {
 		return nil
 	}
 
-	cm.logger.Info("Considering range delete compaction",
-		"rangeDeleteID", oldestRT.ID,
-		"seq", oldestRT.Seq,
-		"start", string(oldestRT.Start),
-		"end", string(oldestRT.End))
-
-	// Find all files that overlap with this range delete across all levels
-	// Map: level -> overlapping files
+	// Find all files across all levels that overlap with this range delete.
 	affectedFiles := make(map[int][]*FileMetadata)
-	totalFiles := 0
-
 	for level := 0; level < cm.options.MaxLevels; level++ {
-		files := version.GetFiles(level)
-		var overlapping []*FileMetadata
-
-		for _, file := range files {
-			// CRITICAL: Skip files where range delete can't affect any keys
-			// If range delete's sequence is older than all keys in file,
-			// it can't delete anything in this file (all keys are newer)
+		for _, file := range version.GetFiles(level) {
+			// Optimization: if the range delete is older than every key in the file, it can't do anything.
 			if oldestRT.Seq < file.SmallestSeq {
 				continue
 			}
-
-			// Check if file's key range overlaps with range delete
-			// Range delete is [Start, End)
-			// File range is [SmallestKey, LargestKey]
-			smallestUser := file.SmallestKey.UserKey()
-			largestUser := file.LargestKey.UserKey()
-
-			// Check for overlap: file.largest >= rt.Start AND file.smallest < rt.End
-			if largestUser.Compare(keys.UserKey(oldestRT.Start)) >= 0 &&
-				smallestUser.Compare(keys.UserKey(oldestRT.End)) < 0 {
-				overlapping = append(overlapping, file)
+			if file.LargestKey.UserKey().Compare(oldestRT.Start) >= 0 && file.SmallestKey.UserKey().Compare(oldestRT.End) < 0 {
+				affectedFiles[level] = append(affectedFiles[level], file)
 			}
-		}
-
-		if len(overlapping) > 0 {
-			affectedFiles[level] = overlapping
-			totalFiles += len(overlapping)
 		}
 	}
 
-	if totalFiles == 0 {
-		cm.logger.Debug("No files overlap with range delete - will be cleaned up",
-			"rangeDeleteID", oldestRT.ID)
+	if len(affectedFiles) == 0 {
 		return nil
 	}
 
-	// Create same-level compactions for ALL affected levels
-	// This ensures we process every file that could contain keys in the range delete's scope
+	// Create a compaction job for each affected level.
 	var compactions []*Compaction
-
 	for level, files := range affectedFiles {
-		cm.logger.Info("PICKED_RANGE_DELETE_COMPACTION",
-			"rangeDeleteID", oldestRT.ID,
-			"rangeDeleteSeq", oldestRT.Seq,
-			"level", level,
-			"outputLevel", level,
-			"inputFiles", cm.getFileNums(files),
-			"compactionType", "same-level",
-			"totalAffectedLevels", len(affectedFiles),
-			"totalAffectedFiles", totalFiles)
-
-		// Create same-level compaction (Lx→Lx)
-		// This rewrites the affected files at the same level, applying the range delete
 		compaction := &Compaction{
 			level:             level,
-			outputLevel:       level, // Same level!
+			outputLevel:       level, // Same-level compaction!
 			version:           version,
 			inputFiles:        make([][]*FileMetadata, 2),
-			outputFiles:       make([]*FileMetadata, 0),
-			stats:             &CompactionStats{},
 			maxOutputFileSize: cm.options.TargetFileSize(level),
 		}
-
-		// Set input files - only from the same level, no merge with next level
-		compaction.inputFiles[0] = append([]*FileMetadata{}, files...)
-		compaction.inputFiles[1] = nil // No files from "next level"
-
+		compaction.inputFiles[0] = files
 		compactions = append(compactions, compaction)
 	}
 
-	if len(compactions) == 0 {
-		return nil
+	if len(compactions) > 0 {
+		// After the *last* compaction in the batch is done, we can safely remove the range delete.
+		compactions[len(compactions)-1].rangeDeleteToRemove = oldestRT.ID
 	}
-
-	// Mark the LAST compaction to remove the range delete after completion
-	// This ensures all affected levels have been compacted before removal
-	compactions[len(compactions)-1].rangeDeleteToRemove = oldestRT.ID
 
 	return compactions
 }
 
-// doCompaction performs the actual compaction work.
+// doCompaction is the heavy lifter. It merges, filters, and writes out new SSTables.
 func (cm *CompactionManager) doCompaction(compaction *Compaction, version *Version) (*VersionEdit, error) {
-	// Create iterator for merging all input files
 	iter, err := cm.createCompactionIterator(compaction, version)
 	if err != nil {
 		return nil, err
 	}
 	defer iter.Close()
 
-	// Create output files
-	currentOutputFile := 0
 	var currentWriter *sstable.SSTableWriter
-	var currentFileSize int64
-
 	outputFileNum := cm.versions.NewFileNumber()
-
-	// Track the last processed user key to handle duplicates and tombstones
 	var lastUserKey []byte
 	var skipCurrentUserKey bool
 
-	entryCount := 0
-	currentFileEntryCount := 0
 	for iter.SeekToFirst(); iter.Valid(); iter.Next() {
 		k := iter.Key()
 		v := iter.Value()
 
-		// Skip invalid keys
 		if k == nil {
 			continue
 		}
 
-		entryCount++
-
-		// Check if this is a new user key
+		// This is the core logic for dropping old/deleted data.
 		isNewUserKey := lastUserKey == nil || k.UserKey().Compare(lastUserKey) != 0
-
 		if isNewUserKey {
-			// New user key - reset state
-			lastUserKey = make([]byte, len(k.UserKey()))
-			copy(lastUserKey, k.UserKey())
+			lastUserKey = append(lastUserKey[:0], k.UserKey()...)
 			skipCurrentUserKey = false
 
-			// If the most recent version is a delete, check if we can drop the tombstone
+			// If this is a tombstone, can we drop it?
 			if k.Kind() == keys.KindDelete {
-				// Can drop tombstone if:
-				// 1. We're at the bottom level (no lower levels exist), OR
-				// 2. The key doesn't exist in any level beyond the output level
-				canDropTombstone := compaction.outputLevel >= cm.options.MaxLevels-1 ||
-					compaction.KeyNotExistsBeyondOutputLevel(k.UserKey())
-
-				if canDropTombstone {
-					// Tombstone can be safely dropped - skip this entire user key
+				// We can drop a tombstone if we know for sure the key doesn't exist
+				// in any lower levels.
+				if compaction.KeyNotExistsBeyondOutputLevel(k.UserKey()) {
 					skipCurrentUserKey = true
-					continue
 				}
-
-				// Tombstone must be preserved because key might exist in lower levels
-				skipCurrentUserKey = true
-				// Don't continue here - write the tombstone to output
 			}
-		} else {
-			// Same user key - skip if we're already skipping this key or if it's an older version
-			if skipCurrentUserKey {
-				continue
-			}
-			// For same user key, we only want the most recent version (first encountered)
-			// Since iterators return keys in sorted order, skip subsequent versions
-			continue
 		}
 
-		// Check if we need to start a new output file
+		if skipCurrentUserKey {
+			continue // Skip this key and all older versions of it.
+		}
+
+		// Create a new output file if we need one.
 		if currentWriter == nil {
 			var err error
 			currentWriter, err = cm.createOutputFile(outputFileNum, compaction.outputLevel)
 			if err != nil {
 				return nil, err
 			}
-			currentFileSize = 0
-			currentFileEntryCount = 0
-			compaction.stats.FilesWritten++
 		}
 
-		// Write the encoded internal key and value (using pooled encoding)
-		err := currentWriter.Add(k, v)
-		if err != nil {
+		if err := currentWriter.Add(k, v); err != nil {
 			return nil, err
 		}
 
-		currentFileEntryCount++
-
-		// Update stats (still track raw key+value bytes for statistics)
-		compaction.stats.BytesWritten += uint64(len(k) + len(v))
-
-		// Check if current file is large enough to finish using actual estimated size
-		currentFileSize = int64(currentWriter.EstimatedSize())
-		if currentFileSize >= compaction.maxOutputFileSize {
-			cm.logger.Info("CLOSING FILE",
-				"currentFileSize", currentFileSize,
-				"maxOutputFileSize", compaction.maxOutputFileSize,
-				"fileNum", outputFileNum,
-				"entriesInFile", currentFileEntryCount)
-			if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction, currentFileEntryCount); err != nil {
+		// If the output file is full, finish it and start a new one.
+		if int64(currentWriter.EstimatedSize()) >= compaction.maxOutputFileSize {
+			if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction); err != nil {
 				return nil, err
 			}
 			currentWriter = nil
-			currentOutputFile++
 			outputFileNum = cm.versions.NewFileNumber()
 		}
 	}
 
-	// Finish the last output file if it exists
 	if currentWriter != nil {
-		cm.logger.Info("FINISHING LAST FILE",
-			"entryCount", entryCount,
-			"entriesInFile", currentFileEntryCount,
-			"currentFileSize", int64(currentWriter.EstimatedSize()),
-			"maxOutputFileSize", compaction.maxOutputFileSize)
-		if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction, currentFileEntryCount); err != nil {
+		if err := cm.finishOutputFile(currentWriter, outputFileNum, compaction); err != nil {
 			return nil, err
 		}
-	} else {
-		cm.logger.Info("NO FILE TO FINISH",
-			"entryCount", entryCount)
 	}
 
-	// Create version edit for the compaction results
-	edit, err := cm.installCompactionResults(compaction)
-	if err != nil {
-		return nil, err
-	}
-
-	return edit, nil
+	return cm.installCompactionResults(compaction)
 }
 
-// createCompactionIterator creates a merged iterator for all input files.
+// createCompactionIterator creates a single merged view over all input SSTables for a compaction.
 func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, version *Version) (Iterator, error) {
-	var iterators []Iterator
-	var cachedReaders []*CachedReader
-
-	// Count total input files for capacity hint
-	expectedIterators := 0
-	for _, levelFiles := range compaction.inputFiles {
-		expectedIterators += len(levelFiles)
-	}
-
-	// For compaction, we need to see tombstones to handle deletions properly
-	mergedIter := NewMergeIterator(nil, true, 0, expectedIterators)
-
-	// Set range deletes from version for filtering during compaction
+	expectedIterators := len(compaction.inputFiles[0]) + len(compaction.inputFiles[1])
+	mergedIter := NewMergeIterator(nil, true, 0, expectedIterators) // Include tombstones for compaction logic.
 	mergedIter.SetRangeDeletes(version.GetRangeDeletes())
 
-	// Add iterators for all input files
+	var cachedReaders []*CachedReader
 	for _, levelFiles := range compaction.inputFiles {
 		for _, file := range levelFiles {
-			// Files are already referenced during compaction setup, no need to ref again
-
-			// Use file cache to open SSTable (handles missing files gracefully)
 			filePath := filepath.Join(cm.path, fmt.Sprintf("%06d.sst", file.FileNum))
 			cachedReader, err := cm.fileCache.Get(file.FileNum, filePath)
 			if err != nil {
-				// File missing during compaction is a serious error
-				cm.logger.Error("failed to open SSTable during compaction", "error", err,
-					"file_num", file.FileNum,
-					"version_number", version.number)
+				// This is bad. A file listed in the version is missing.
+				cm.logger.Error("Failed to open SSTable during compaction", "error", err, "file_num", file.FileNum)
 				continue
 			}
-
 			cachedReaders = append(cachedReaders, cachedReader)
-			reader := cachedReader.Reader()
-			iter := reader.NewIterator(true) // Disable block cache for compaction
-			iterators = append(iterators, iter)
+			iter := cachedReader.Reader().NewIterator(true) // Disable block cache for compaction scans.
 			mergedIter.AddIterator(iter)
-			compaction.stats.FilesRead++
 		}
 	}
 
-	if len(iterators) == 0 {
-		// All files were missing - return empty iterator
-		return &emptyIterator{}, nil
-	}
-
-	return &compactionIterator{
-		Iterator:      mergedIter,
-		cachedReaders: cachedReaders,
-		inputFiles:    compaction.inputFiles,
-	}, nil
+	return &compactionIterator{Iterator: mergedIter, cachedReaders: cachedReaders}, nil
 }
 
-// createOutputFile creates a new output SSTable file.
-// The level parameter determines which compression config to use for tiered compression.
+// createOutputFile creates a new SSTable writer for a compaction output file.
 func (cm *CompactionManager) createOutputFile(fileNum uint64, level int) (*sstable.SSTableWriter, error) {
-
 	wopts := sstable.SSTableOpts{
 		Path:                 filepath.Join(cm.path, fmt.Sprintf("%06d.sst", fileNum)),
 		Compression:          cm.options.GetCompressionForLevel(level),
@@ -901,281 +568,166 @@ func (cm *CompactionManager) createOutputFile(fileNum uint64, level int) (*sstab
 	return sstable.NewSSTableWriter(wopts)
 }
 
-// finishOutputFile finishes writing an output file and adds it to the compaction.
-func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fileNum uint64, compaction *Compaction, numEntries int) error {
+// finishOutputFile finalizes an SSTable, closes it, and records its metadata.
+func (cm *CompactionManager) finishOutputFile(writer *sstable.SSTableWriter, fileNum uint64, compaction *Compaction) error {
 	if err := writer.Finish(); err != nil {
 		return err
 	}
-
 	if err := writer.Close(); err != nil {
 		return err
 	}
-
 	cm.fileCache.Evict(fileNum)
 
-	// Create file metadata
 	fileMetadata := &FileMetadata{
 		FileNum:       fileNum,
 		Size:          writer.EstimatedSize(),
 		SmallestKey:   writer.SmallestKey(),
 		LargestKey:    writer.LargestKey(),
-		NumEntries:    uint64(numEntries),
+		NumEntries:    writer.NumEntries(),
 		SmallestSeq:   writer.SmallestSeq(),
 		LargestSeq:    writer.LargestSeq(),
 		NumTombstones: writer.NumTombstones(),
 	}
-
 	compaction.outputFiles = append(compaction.outputFiles, fileMetadata)
-
-	cm.logger.Info("COMPACTION_OUTPUT_FILE_CREATED",
-		"fileNum", fileNum,
-		"size", fileMetadata.Size,
-		"numEntries", numEntries,
-		"totalOutputFiles", len(compaction.outputFiles))
-
 	return nil
 }
 
-// installCompactionResults creates the version edit for compaction results
-// Returns the edit so DB can apply it under proper locking
+// installCompactionResults creates the VersionEdit that describes the changes from the compaction.
 func (cm *CompactionManager) installCompactionResults(compaction *Compaction) (*VersionEdit, error) {
 	edit := NewVersionEdit()
-
-	// Debug: Log what we're about to do
-	cm.logger.Info("COMPACTION_INSTALL_START",
-		"level", compaction.level,
-		"outputLevel", compaction.outputLevel,
-		"inputFilesL0", len(compaction.inputFiles[0]),
-		"inputFilesL1", len(compaction.inputFiles[1]),
-		"outputFiles", len(compaction.outputFiles))
-
-	// Remove input files
+	// Mark input files for deletion.
 	for level, levelFiles := range compaction.inputFiles {
 		actualLevel := compaction.level + level
-		var fileNums []uint64
 		for _, file := range levelFiles {
 			edit.RemoveFile(actualLevel, file.FileNum)
-			fileNums = append(fileNums, file.FileNum)
-		}
-		if len(fileNums) > 0 {
-			cm.logger.Info("COMPACTION_REMOVING_FILES", "level", actualLevel, "files", fileNums)
 		}
 	}
-
-	// Add output files
-	var outputFileNums []uint64
+	// Add the new output files.
 	for _, file := range compaction.outputFiles {
 		edit.AddFile(compaction.outputLevel, file)
-		outputFileNums = append(outputFileNums, file.FileNum)
 	}
-	if len(outputFileNums) > 0 {
-		cm.logger.Info("COMPACTION_ADDING_FILES", "level", compaction.outputLevel, "files", outputFileNums)
-	}
-
-	// Note: Input files will be unreferenced by the version system when
-	// they are removed from versions and no longer needed by any iterators
 	return edit, nil
 }
 
-// Close shuts down the compaction manager
+// Close shuts down the compaction manager and waits for the worker to finish.
 func (cm *CompactionManager) Close() {
 	cm.mu.Lock()
 	if cm.closed {
 		cm.mu.Unlock()
 		return
 	}
-
 	cm.closed = true
-	close(cm.closeChan) // Signal the worker to shut down
+	close(cm.closeChan)
 	cm.mu.Unlock()
-
-	// Wait for the worker goroutine to finish
 	cm.wg.Wait()
 }
 
-// IsCompactionInProgress returns false in simplified model
-// The worker handles one compaction at a time internally
+// IsCompactionInProgress is a simplified check.
 func (cm *CompactionManager) IsCompactionInProgress() bool {
-	return false // Simplified: we don't expose internal worker state
+	return false // We don't expose the internal worker state for now.
 }
 
-// Compaction represents a compaction operation
+// Compaction represents a single compaction job. It's the "job ticket" for the worker.
 type Compaction struct {
-	level               int
-	outputLevel         int
-	version             *Version
-	inputFiles          [][]*FileMetadata // [level][file_index]
-	outputFiles         []*FileMetadata
+	level       int
+	outputLevel int
+	version     *Version
+	inputFiles  [][]*FileMetadata // [0] is for level, [1] is for level+1
+	outputFiles []*FileMetadata
+
 	stats               *CompactionStats
 	maxOutputFileSize   int64
-	rangeDeleteToRemove uint64 // If non-zero, remove this range delete after compaction completes
+	rangeDeleteToRemove uint64 // If non-zero, remove this range delete after the job is done.
 }
 
-// KeyNotExistsBeyondOutputLevel returns true if the given user key definitely
-// does not exist in any level beyond the output level. This allows for early
-// tombstone dropping during compaction - if a tombstone's key doesn't exist
-// in lower levels, the tombstone can be safely dropped.
-//
-// Returns true if the key is guaranteed not to exist beyond output level.
-// Returns false if the key might exist (conservative approach).
+// KeyNotExistsBeyondOutputLevel is a crucial optimization. It checks if a key could
+// possibly exist in any level deeper than where we're compacting to. If not, we can
+// safely drop any tombstones for that key, preventing them from living forever.
 func (c *Compaction) KeyNotExistsBeyondOutputLevel(userKey []byte) bool {
-	// If compacting to the bottom level, no levels exist beyond it
 	if c.outputLevel >= len(c.version.files)-1 {
-		return true
+		return true // We're compacting to the bottom-most level.
 	}
-
-	// Check all levels below the output level
 	for level := c.outputLevel + 1; level < len(c.version.files); level++ {
-		files := c.version.GetFiles(level)
-
-		// Check if userKey falls within any file's key range at this level
-		for _, file := range files {
-			// Files in L1+ have non-overlapping ranges within a level
-			// Check if userKey is within [SmallestKey, LargestKey]
-			if file.SmallestKey.UserKey().Compare(userKey) <= 0 &&
-				file.LargestKey.UserKey().Compare(userKey) >= 0 {
-				// Key falls within this file's range, so it might exist
-				return false
+		for _, file := range c.version.GetFiles(level) {
+			// Since files in L1+ are sorted and non-overlapping, we just need to check if
+			// the key is within the file's range.
+			if file.SmallestKey.UserKey().Compare(userKey) <= 0 && file.LargestKey.UserKey().Compare(userKey) >= 0 {
+				return false // The key *might* exist in this lower level.
 			}
 		}
 	}
-
-	// Key doesn't fall within any file range in levels beyond output
-	return true
+	return true // The key does not exist in any lower level.
 }
 
-// Cleanup cleans up resources used by the compaction.
+// Cleanup releases resources used by the compaction.
 func (c *Compaction) Cleanup() {
-	// Note: File unreferencing is handled by the version system when files
-	// are removed from versions. We don't unref files here to avoid
-	// unreferencing them while they're still in use by iterators.
-
-	// Note: version cleanup is handled by the caller under db.mu protection
-	// We don't unref the version here because it might still be in use by iterators
+	// File unreferencing is handled by the VersionSet when the version edit is applied.
 }
 
-// compactionIterator wraps a merged iterator and handles cleanup of cached readers
+// compactionIterator is a wrapper to ensure we clean up resources after a compaction scan.
 type compactionIterator struct {
 	Iterator
 	cachedReaders []*CachedReader
-	inputFiles    [][]*FileMetadata
 }
 
-// Close releases cached readers and unreferences files.
+// Close ensures the underlying iterators are closed.
 func (ci *compactionIterator) Close() error {
-	// Close the underlying iterator first
-	if err := ci.Iterator.Close(); err != nil {
-		return err
-	}
-
-	// Cached readers are cleaned up through epoch system
-
-	// Files are now protected by version references only
-
-	return nil
+	return ci.Iterator.Close()
 }
 
-// cleanupObsoleteRangeDeletes checks for range deletes that no longer overlap
-// with any keys in the database and removes them
+// cleanupObsoleteRangeDeletes scans for range deletes that no longer cover any data and removes them.
 func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 	version := cm.versions.GetCurrentVersion()
-	if version == nil {
-		return
-	}
-
+	defer version.MarkForCleanup()
 	rangeDeletes := version.GetRangeDeletes()
 	if len(rangeDeletes) == 0 {
 		return
 	}
 
 	var obsoleteIDs []uint64
-
-	// Check each range delete to see if it still overlaps with any keys
 	for _, rt := range rangeDeletes {
 		hasOverlap := false
-
-		// Check all levels for overlapping keys
-		for level := range cm.options.MaxLevels {
-			files := version.GetFiles(level)
-			for _, file := range files {
-				// OPTIMIZATION: If range delete's sequence is older than all keys in file,
-				// it can't affect this file at all (all keys are newer)
+		for level := 0; level < cm.options.MaxLevels && !hasOverlap; level++ {
+			for _, file := range version.GetFiles(level) {
 				if rt.Seq < file.SmallestSeq {
-					cm.logger.Debug("skipping file - range delete too old",
-						"rangeDeleteID", rt.ID, "rangeDeleteSeq", rt.Seq,
-						"fileNum", file.FileNum, "fileSmallestSeq", file.SmallestSeq)
-					continue // Skip this file
+					continue
 				}
-
-				// Check if file's key range overlaps with range delete
-				// Range delete is [rt.Start, rt.End)
-				// File range is [file.SmallestKey, file.LargestKey]
-
-				smallestUser := file.SmallestKey.UserKey()
-				largestUser := file.LargestKey.UserKey()
-
-				// Check for overlap: file.largest >= rt.Start AND file.smallest < rt.End
-				if largestUser.Compare(keys.UserKey(rt.Start)) >= 0 &&
-					smallestUser.Compare(keys.UserKey(rt.End)) < 0 {
-					cm.logger.Debug("found overlap - range delete still needed",
-						"rangeDeleteID", rt.ID, "rangeDeleteSeq", rt.Seq,
-						"fileNum", file.FileNum, "level", level,
-						"fileSmallestSeq", file.SmallestSeq, "fileLargestSeq", file.LargestSeq,
-						"fileSmallest", string(smallestUser), "fileLargest", string(largestUser))
+				if file.LargestKey.UserKey().Compare(rt.Start) >= 0 && file.SmallestKey.UserKey().Compare(rt.End) < 0 {
 					hasOverlap = true
 					break
 				}
 			}
-			if hasOverlap {
-				break
-			}
 		}
-
-		// If no overlap found, this range delete is obsolete
 		if !hasOverlap {
 			obsoleteIDs = append(obsoleteIDs, rt.ID)
-			cm.logger.Debug("range delete is obsolete", "id", rt.ID,
-				"start", string(rt.Start), "end", string(rt.End))
 		}
 	}
 
-	// Remove obsolete range deletes
 	if len(obsoleteIDs) > 0 {
-		rangeDeleteEdit := NewRangeDeleteEdit()
+		edit := NewRangeDeleteEdit()
 		for _, id := range obsoleteIDs {
-			rangeDeleteEdit.RemoveRangeDelete(id)
+			edit.RemoveRangeDelete(id)
 		}
-
-		// Apply the edit (with empty version edit)
-		emptyEdit := NewVersionEdit()
-		err := cm.versions.LogAndApplyWithRangeDeletes(emptyEdit, rangeDeleteEdit)
-		if err != nil {
-			cm.logger.Error("failed to remove obsolete range deletes", "error", err)
-			return
+		if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
+			cm.logger.Error("Failed to remove obsolete range deletes", "error", err)
+		} else {
+			cm.logger.Info("Removed obsolete range deletes", "count", len(obsoleteIDs))
 		}
-
-		cm.logger.Info("removed obsolete range deletes", "count", len(obsoleteIDs))
 	}
 }
 
-// removeRangeDelete removes a range delete from memory after all affected
-// files have been compacted.
+// removeRangeDelete removes a specific range delete after its compaction jobs are complete.
 func (cm *CompactionManager) removeRangeDelete(id uint64) {
-	rangeDeleteEdit := NewRangeDeleteEdit()
-	rangeDeleteEdit.RemoveRangeDelete(id)
-
-	// Apply the edit (with empty version edit)
-	emptyEdit := NewVersionEdit()
-	err := cm.versions.LogAndApplyWithRangeDeletes(emptyEdit, rangeDeleteEdit)
-	if err != nil {
-		cm.logger.Error("failed to remove range delete", "error", err, "id", id)
-		return
+	edit := NewRangeDeleteEdit()
+	edit.RemoveRangeDelete(id)
+	if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
+		cm.logger.Error("Failed to remove range delete", "error", err, "id", id)
+	} else {
+		cm.logger.Info("Removed range delete", "id", id)
 	}
-
-	cm.logger.Info("removed range delete", "id", id)
 }
 
-// emptyIterator is a placeholder iterator for when no input files are available.
+// emptyIterator is a placeholder for when a compaction has no input files.
 type emptyIterator struct{}
 
 func (ei *emptyIterator) Valid() bool                 { return false }
