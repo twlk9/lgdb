@@ -1001,13 +1001,13 @@ func (cm *CompactionManager) IsCompactionInProgress() bool {
 
 // Compaction represents a compaction operation
 type Compaction struct {
-	level             int
-	outputLevel       int
-	version           *Version
-	inputFiles        [][]*FileMetadata // [level][file_index]
-	outputFiles       []*FileMetadata
-	stats             *CompactionStats
-	maxOutputFileSize int64
+	level               int
+	outputLevel         int
+	version             *Version
+	inputFiles          [][]*FileMetadata // [level][file_index]
+	outputFiles         []*FileMetadata
+	stats               *CompactionStats
+	maxOutputFileSize   int64
 	rangeDeleteToRemove uint64 // If non-zero, remove this range delete after compaction completes
 }
 

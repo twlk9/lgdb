@@ -4,78 +4,84 @@ import (
 	"sync"
 )
 
-// BufferPool provides reusable byte slices to reduce allocations
+const (
+	smallBufferSize = 4096
+	largeBufferSize = 32768
+)
+
+// BufferPool provides reusable byte slices to reduce allocations.
+// It maintains two pools for different buffer sizes to optimize memory usage.
 type BufferPool struct {
-	small sync.Pool // For buffers <= 4KB
-	large sync.Pool // For buffers > 4KB
+	small sync.Pool // For buffers <= smallBufferSize
+	large sync.Pool // For buffers > smallBufferSize and <= largeBufferSize
 }
 
-// NewBufferPool creates a new buffer pool
+// NewBufferPool creates a new buffer pool with predefined size classes.
 func NewBufferPool() *BufferPool {
 	return &BufferPool{
 		small: sync.Pool{
 			New: func() any {
-				buf := make([]byte, 0, 4096) // 4KB initial capacity
-				return &buf
+				// Slices returned from the pool have zero length but a pre-allocated capacity.
+				return make([]byte, 0, smallBufferSize)
 			},
 		},
 		large: sync.Pool{
 			New: func() any {
-				buf := make([]byte, 0, 32768) // 32KB initial capacity
-				return &buf
+				return make([]byte, 0, largeBufferSize)
 			},
 		},
 	}
 }
 
-// Get returns a byte slice with at least the requested capacity
+// Get returns a byte slice with at least the requested capacity.
+// The returned slice will have a length equal to the requested size.
 func (p *BufferPool) Get(size int) []byte {
-	if size <= 4096 {
-		bufPtr := p.small.Get().(*[]byte)
-		buf := *bufPtr
-		if cap(buf) >= size {
-			*bufPtr = buf[:size] // Modify the slice in-place via pointer
-			return *bufPtr
-		}
-		// Buffer too small, return to pool and allocate new one
-		p.small.Put(bufPtr)
-		return make([]byte, size)
+	var buf []byte
+	if size <= smallBufferSize {
+		buf = p.small.Get().([]byte)
+	} else if size <= largeBufferSize {
+		buf = p.large.Get().([]byte)
 	} else {
-		bufPtr := p.large.Get().(*[]byte)
-		buf := *bufPtr
-		if cap(buf) >= size {
-			*bufPtr = buf[:size] // Modify the slice in-place via pointer
-			return *bufPtr
-		}
-		// Buffer too small, return to pool and allocate new one
-		p.large.Put(bufPtr)
+		// For requests larger than the largest pool size, allocate a new slice.
+		// This buffer will not be returned to the pool.
 		return make([]byte, size)
 	}
+
+	// If the buffer from the pool has less capacity than required,
+	// allocate a new one. The undersized buffer is discarded and will be GC'd.
+	if cap(buf) < size {
+		return make([]byte, size)
+	}
+
+	// Reuse the buffer by slicing it to the desired length.
+	return buf[:size]
 }
 
-// Put returns a byte slice to the pool for reuse
+// Put returns a byte slice to the appropriate pool for reuse.
+// Buffers with capacities that don't match the pool sizes are discarded.
 func (p *BufferPool) Put(buf []byte) {
-	if cap(buf) <= 4096 {
-		// Reset length to 0 and put the pointer back
-		buf = buf[:0]
-		p.small.Put(&buf)
-	} else if cap(buf) <= 32768 {
-		// Reset length to 0 and put the pointer back
-		buf = buf[:0]
-		p.large.Put(&buf)
+	// Reset the slice length to 0, preserving its capacity.
+	buf = buf[:0]
+
+	// Place the buffer back into the correct pool based on its capacity.
+	// Buffers that don't match the pool's capacity are left for the GC.
+	switch cap(buf) {
+	case smallBufferSize:
+		p.small.Put(buf)
+	case largeBufferSize:
+		p.large.Put(buf)
 	}
-	// If buffer is too large, let it be garbage collected
 }
 
 // Global buffer pool instance
 var globalBufferPool = NewBufferPool()
 
-// GetBuffer returns a byte slice from the global pool
+// GetBuffer returns a byte slice from the global pool.
 func GetBuffer(size int) []byte {
 	return globalBufferPool.Get(size)
 }
 
-// PutBuffer returns a byte slice to the global pool
+// PutBuffer returns a byte slice to the global pool.
 func PutBuffer(buf []byte) {
 	globalBufferPool.Put(buf)
 }

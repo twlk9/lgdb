@@ -29,7 +29,7 @@ func TestWALSizeTrackingWithBytesPerSync(t *testing.T) {
 	// Write 10KB of data in small chunks
 	// Each record is about 100 bytes, so we'll trigger multiple syncs
 	totalBytes := int64(0)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		key := make([]byte, 50)
 		value := make([]byte, 50)
 
