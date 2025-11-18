@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/sstable"
 )
 
@@ -239,15 +238,13 @@ func (s *fileCacheShard) removeFromCache(entry *fileCacheEntry) {
 		entry.element = nil // Mark as removed
 	}
 
-	// Schedule SSTableReader cleanup via epoch system for safety
-	if entry.reader != nil {
-		reader := entry.reader
-		entry.reader = nil // Clear reference to prevent double cleanup
-		epoch.ScheduleCleanup(func() error {
-			reader.Close()
-			return nil
-		})
-	}
+	// DO NOT close the reader here!
+	// The SSTableReader will be kept alive by the file descriptor and any code holding
+	// references (iterators via Versions, compaction, etc.). The actual file cleanup
+	// happens when the Version that registered it is cleaned up by the epoch system.
+	// Simply clearing the cache reference allows the LRU to make room for new files
+	// while letting active readers keep using the SSTableReader they already have.
+	entry.reader = nil
 }
 
 // CachedReader wraps an SSTableReader from the file cache

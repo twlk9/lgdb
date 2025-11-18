@@ -104,47 +104,71 @@ func (cm *CompactionManager) compactionWorker() {
 			return
 
 		case <-cm.wakeupChan:
-			cm.logger.Info("Compaction work requested - checking for tasks")
-
-			version := cm.versions.GetCurrentVersion()
-			compactions := cm.pickCompaction(version)
-			if compactions == nil {
-				cm.logger.Debug("No compaction needed right now")
-				version.MarkForCleanup()
-				// Signal completion even if there was no work, in case someone is waiting.
-				select {
-				case cm.doneChan <- nil:
-				default:
-				}
-				continue
-			}
-
-			var err error
-			for i, compaction := range compactions {
-				if len(compactions) > 1 {
-					cm.logger.Info("Processing compaction batch", "progress", fmt.Sprintf("%d/%d", i+1, len(compactions)))
-				}
-				err = cm.doCompactionWork(compaction, version)
-				if err != nil {
-					cm.logger.Error("Compaction failed", "error", err)
-					break // Stop the batch on failure.
-				}
-				if compaction.rangeDeleteToRemove != 0 {
-					cm.logger.Info("Removing range delete after compaction", "rangeDeleteID", compaction.rangeDeleteToRemove)
-					cm.removeRangeDelete(compaction.rangeDeleteToRemove)
-				}
-			}
-
-			version.MarkForCleanup()
-			select {
-			case cm.doneChan <- err:
-			default:
-			}
+			cm.logger.Info("Compaction work requested - starting compaction")
+			// Handle compaction in a separate function to use defer for cleanup
+			cm.handleCompactionCycle()
 		}
 	}
 }
 
-// doCompactionWork executes a single compaction job from start to finish.
+// handleCompactionCycle processes one compaction cycle with proper cleanup
+func (cm *CompactionManager) handleCompactionCycle() {
+	// Grab a fresh current version when we're ready to do work
+	version := cm.versions.GetCurrentVersion()
+	// CRITICAL: Always mark version for cleanup when done, even if panic occurs
+	defer version.MarkForCleanup()
+
+	// Pick compaction(s) based on fresh version
+	compactions := cm.pickCompaction(version)
+	if compactions == nil {
+		cm.logger.Debug("No compaction needed")
+		// Signal completion even when no work is needed
+		select {
+		case cm.doneChan <- nil:
+		default:
+		}
+		return
+	}
+
+	// Process all compactions sequentially
+	var err error
+	for i, compaction := range compactions {
+		if len(compactions) > 1 {
+			cm.logger.Info("Processing compaction batch",
+				"progress", fmt.Sprintf("%d/%d", i+1, len(compactions)),
+				"level", compaction.level)
+		}
+
+		// Do the actual compaction work
+		err = cm.doCompactionWork(compaction, version)
+		if err != nil {
+			cm.logger.Error("Compaction failed",
+				"error", err,
+				"batchIndex", i,
+				"totalInBatch", len(compactions))
+			break
+		}
+
+		// Check if we need to remove a range delete after this compaction
+		if compaction.rangeDeleteToRemove != 0 {
+			cm.logger.Info("Removing range delete after compaction",
+				"rangeDeleteID", compaction.rangeDeleteToRemove)
+			cm.removeRangeDelete(compaction.rangeDeleteToRemove)
+		}
+	}
+
+	// Signal completion (non-blocking)
+	select {
+	case cm.doneChan <- err:
+	default:
+		// If nobody is listening, that's fine
+	}
+}
+
+// doCompactionWork performs the complete compaction workflow:
+// 1. Do the compaction
+// 2. Apply version edit
+// 3. Clean up obsolete files
 func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *Version) error {
 	cm.logger.Info("Starting compaction", "level", compaction.level, "outputLevel", compaction.outputLevel)
 	startTime := time.Now()
@@ -170,6 +194,7 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 	// If we just compacted L0, we might have relieved backpressure.
 	if compaction.level == 0 && cm.flushBP != nil {
 		v := cm.versions.GetCurrentVersion()
+		defer v.MarkForCleanup()
 		if len(v.GetFiles(0)) < cm.options.L0StopWritesTrigger {
 			cm.flushBP.Broadcast() // Wake up any waiting writers.
 		}
@@ -679,6 +704,11 @@ func (ci *compactionIterator) Close() error {
 func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 	version := cm.versions.GetCurrentVersion()
 	defer version.MarkForCleanup()
+	if version == nil {
+		return
+	}
+	defer version.MarkForCleanup()
+
 	rangeDeletes := version.GetRangeDeletes()
 	if len(rangeDeletes) == 0 {
 		return

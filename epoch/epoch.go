@@ -103,6 +103,16 @@ func ResourceExists(resourceID string) bool {
 	return globalManager.ResourceExists(resourceID)
 }
 
+// GetEpochReaderCounts returns epoch reader counts for debugging
+func GetEpochReaderCounts() map[uint64]int32 {
+	return globalManager.GetEpochReaderCounts()
+}
+
+// GetOldestActiveReadEpoch returns the oldest epoch with active readers
+func GetOldestActiveReadEpoch() uint64 {
+	return globalManager.GetOldestActiveReadEpoch()
+}
+
 // EnterEpoch enters a new epoch and returns the epoch number.
 func (gem *GlobalEpochManager) EnterEpoch() uint64 {
 	for {
@@ -302,6 +312,21 @@ func (gem *GlobalEpochManager) MarkResourceForCleanup(resourceID string) {
 func (gem *GlobalEpochManager) ResourceExists(resourceID string) bool {
 	_, exists := gem.resourceWindows.Load(resourceID)
 	return exists
+}
+
+// GetEpochReaderCounts returns a map of epoch -> reader count for debugging
+func (gem *GlobalEpochManager) GetEpochReaderCounts() map[uint64]int32 {
+	counts := make(map[uint64]int32)
+	gem.readerCounts.Range(func(key, value any) bool {
+		epoch := key.(uint64)
+		count := value.(*atomic.Int32)
+		readerCount := count.Load()
+		if readerCount > 0 {
+			counts[epoch] = readerCount
+		}
+		return true
+	})
+	return counts
 }
 
 // GetStats returns debugging information about the epoch manager state.

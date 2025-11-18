@@ -633,10 +633,16 @@ func (vs *VersionSet) cleanupOldVersions() {
 	// Filter out versions marked for removal
 	newVersions := make([]*Version, 0, len(vs.versions))
 	removedCount := 0
+	totalMemtables := 0
+	removedMemtables := 0
 
 	for _, version := range vs.versions {
+		memtableCount := len(version.memtables)
+		totalMemtables += memtableCount
+
 		if atomic.LoadInt32(&version.cleanedUp) == 1 {
 			removedCount++
+			removedMemtables += memtableCount
 			continue // Skip this version - don't add to new slice
 		}
 		newVersions = append(newVersions, version)
@@ -645,6 +651,10 @@ func (vs *VersionSet) cleanupOldVersions() {
 	vs.versions = newVersions
 
 	if removedCount > 0 {
-		vs.logger.Debug("cleaned up old versions", "removed", removedCount, "remaining", len(vs.versions))
+		vs.logger.Info("cleaned up old versions",
+			"removed_versions", removedCount,
+			"remaining_versions", len(vs.versions),
+			"removed_memtable_refs", removedMemtables,
+			"total_memtable_refs", totalMemtables)
 	}
 }
