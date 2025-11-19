@@ -584,9 +584,13 @@ func (cm *CompactionManager) createCompactionIterator(compaction *Compaction, ve
 			filePath := filepath.Join(cm.path, fmt.Sprintf("%06d.sst", file.FileNum))
 			cachedReader, err := cm.fileCache.Get(file.FileNum, filePath)
 			if err != nil {
-				// This is bad. A file listed in the version is missing.
-				cm.logger.Error("Failed to open SSTable during compaction", "error", err, "file_num", file.FileNum)
-				continue
+				// CRITICAL: A file listed in the version is missing or cannot be opened.
+				// We cannot proceed with compaction as this would result in data loss.
+				cm.logger.Error("FATAL: Failed to open SSTable during compaction - aborting to prevent data loss",
+					"error", err,
+					"file_num", file.FileNum,
+					"file_path", filePath)
+				return nil, fmt.Errorf("failed to open SSTable %d for compaction: %w", file.FileNum, err)
 			}
 			cachedReaders = append(cachedReaders, cachedReader)
 			iter := cachedReader.Reader().NewIterator(true) // Disable block cache for compaction scans.
