@@ -209,7 +209,13 @@ func (gem *GlobalEpochManager) TryCleanup() int {
 
 		// Remove cleaned up epoch data
 		gem.cleanupFuncs.Delete(epoch)
-		gem.readerCounts.Delete(epoch)
+		// Double-check count is still 0 before deleting to prevent race
+		// where a thread enters after we checked but before we delete
+		if countInterface, exists := gem.readerCounts.Load(epoch); exists {
+			if countInterface.(*atomic.Int32).Load() == 0 {
+				gem.readerCounts.Delete(epoch)
+			}
+		}
 	}
 
 	// 2. Handle resource window cleanup with xmin/xmax safety

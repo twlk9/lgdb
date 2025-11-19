@@ -169,8 +169,9 @@ func TestMultipleEpochs(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	// Reset global manager
+	// Reset global manager with proper initialization
 	globalManager = &GlobalEpochManager{}
+	globalManager.currentEpoch.Store(1) // Start at 1 to avoid epoch 0 issues
 
 	const numGoroutines = 100
 	const numOperations = 100
@@ -208,18 +209,34 @@ func TestConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 
+	// Capture state before cleanup attempts
+	activeEpochs, pendingCleanups := globalManager.GetStats()
+	readerCounts := GetEpochReaderCounts()
+	t.Logf("After goroutines: activeEpochs=%d, pendingCleanups=%d, readerCounts=%v",
+		activeEpochs, pendingCleanups, readerCounts)
+
 	// Advance epoch multiple times to make all scheduled cleanups eligible
-	for range 5 {
+	for i := range 5 {
 		advanceEpoch()
-		TryCleanup()
+		cleaned := TryCleanup()
+		t.Logf("Cleanup round %d: cleaned %d items", i, cleaned)
 	}
 
 	// Final cleanup
 	finalCleaned := TryCleanup()
 	totalExpected := numGoroutines * numOperations
+	actualCleaned := int(cleanupCount.Load())
 
-	if int(cleanupCount.Load()) != totalExpected {
-		t.Errorf("Expected %d total cleanups, got %d", totalExpected, cleanupCount.Load())
+	if actualCleaned != totalExpected {
+		// Get detailed state on failure
+		activeEpochs, pendingCleanups = globalManager.GetStats()
+		readerCounts = GetEpochReaderCounts()
+		detailedInfo := GetDetailedEpochInfo()
+
+		t.Errorf("Expected %d total cleanups, got %d", totalExpected, actualCleaned)
+		t.Logf("Final state: activeEpochs=%d, pendingCleanups=%d", activeEpochs, pendingCleanups)
+		t.Logf("Reader counts: %v", readerCounts)
+		t.Logf("Detailed info: %+v", detailedInfo)
 	}
 
 	t.Logf("Final cleanup round cleaned %d items", finalCleaned)
