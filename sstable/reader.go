@@ -189,11 +189,14 @@ func (r *SSTableReader) readFooter() error {
 	if err != nil {
 		return fmt.Errorf("failed to estimate decompressed size for index block: %w", err)
 	}
-	decompressedIndexData := make([]byte, estimatedSize)
-	decompressedIndexData, err = compression.DecompressBlock(decompressedIndexData, indexBlockData, compressionType)
+	tempBuf := bufferpool.GetBuffer(estimatedSize)
+	defer bufferpool.PutBuffer(tempBuf)
+	decompressedIndexData, err := compression.DecompressBlock(tempBuf, indexBlockData, compressionType)
 	if err != nil {
 		return fmt.Errorf("failed to decompress index block: %w", err)
 	}
+	// Copy to right-sized buffer to avoid holding onto oversized allocation
+	decompressedIndexData = append([]byte(nil), decompressedIndexData...)
 
 	// Parse decompressed index block
 	r.indexBlock, err = r.parseBlock(decompressedIndexData)
@@ -414,23 +417,22 @@ func (r *SSTableReader) readDataBlock(handle BlockHandle, noBlockCache bool) (*B
 	// Decompress the block data
 	var decompressedData []byte
 	if r.blockCache != nil && !noBlockCache {
-		// Use buffer pool only when caching, so we can release the buffer on eviction.
-		// Estimate the decompressed size for more accurate buffer allocation.
+		// Use buffer pool for temporary decompression buffer
 		estimatedSize, err := compression.EstimateDecompressedSize(blockData, compressionType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to estimate decompressed size: %w", err)
 		}
-		decompressedBuf := bufferpool.GetBuffer(estimatedSize)
+		tempBuf := bufferpool.GetBuffer(estimatedSize)
+		defer bufferpool.PutBuffer(tempBuf)
 		var err2 error
-		decompressedData, err2 = compression.DecompressBlock(decompressedBuf, blockData, compressionType)
+		decompressedData, err2 = compression.DecompressBlock(tempBuf, blockData, compressionType)
 		if err2 != nil {
-			bufferpool.PutBuffer(decompressedBuf)
 			return nil, fmt.Errorf("failed to decompress block: %w", err2)
 		}
-		// If the decompressor allocated a new buffer, return ours to the pool.
-		if len(decompressedData) > 0 && len(decompressedBuf) > 0 && &decompressedData[0] != &decompressedBuf[0] {
-			bufferpool.PutBuffer(decompressedBuf)
-		}
+		// Copy to right-sized buffer to avoid caching oversized allocation
+		// (especially important for Snappy which uses 3x estimate)
+		// For S2/Zstd with exact sizes, this is a no-op allocation of same size
+		decompressedData = append([]byte(nil), decompressedData...)
 	} else {
 		// Not caching, so don't use the pool to avoid leaking the buffer.
 		var err error
