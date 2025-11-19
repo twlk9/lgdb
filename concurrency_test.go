@@ -599,7 +599,7 @@ func TestMemoryConsistency(t *testing.T) {
 					keyID := rand.Intn(numKeys)
 					key := fmt.Sprintf("consistency_key_%d", keyID)
 
-					_, err1 := db.Get([]byte(key))
+					val1, err1 := db.Get([]byte(key))
 					if err1 != nil && err1 != ErrNotFound {
 						continue
 					}
@@ -608,7 +608,7 @@ func TestMemoryConsistency(t *testing.T) {
 					time.Sleep(10 * time.Microsecond)
 
 					// Read the same key again
-					_, err2 := db.Get([]byte(key))
+					val2, err2 := db.Get([]byte(key))
 					if err2 != nil && err2 != ErrNotFound {
 						continue
 					}
@@ -619,6 +619,12 @@ func TestMemoryConsistency(t *testing.T) {
 					if (err1 == nil) != (err2 == nil) {
 						atomic.AddInt64(&inconsistencies, 1)
 						t.Logf("Reader %d: inconsistent existence for key %s", readerID, key)
+						t.Logf("  First read:  err=%v, val=%q", err1, val1)
+						t.Logf("  Second read: err=%v, val=%q", err2, val2)
+
+						// Try reading one more time to see current state
+						val3, err3 := db.Get([]byte(key))
+						t.Logf("  Third read:  err=%v, val=%q", err3, val3)
 					}
 					// Note: We don't check value changes as those are expected during concurrent writes
 				}

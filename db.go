@@ -83,7 +83,7 @@ func (db *DB) epochIdleAdvance() {
 				// If the epoch hasn't changed, give it a nudge.
 				c = epoch.AdvanceEpoch()
 				db.triggerEpochCleanup()
-				db.logger.Info("Idle timer advancing epoch", "old", e, "new", c)
+				db.logger.Debug("Idle timer advancing epoch", "old", e, "new", c)
 			} else {
 				// The epoch changed on its own, so just update our view.
 				c = e
@@ -381,10 +381,10 @@ func (db *DB) backgroundFlusher() {
 			return
 		}
 
-		// Success! Clean up the flushed memtable.
+		// Success! Update version FIRST to make SSTable visible, THEN remove memtable
+		db.updateCurrentVersion()
 		db.removeFromImmutableMemtables(mt)
 		db.flushBP.Broadcast() // Tell waiting writers they can proceed.
-		db.updateCurrentVersion()
 		db.mu.Unlock()
 
 		// Close the memtable AFTER version update so new iterators see the SSTable
@@ -411,7 +411,7 @@ func (db *DB) waitForL0Backpressure() error {
 
 		if l0Count < db.options.L0StopWritesTrigger {
 			if loggedBackpressure {
-				db.logger.Info("L0_BACKPRESSURE_RESOLVED", "l0_files", l0Count)
+				db.logger.Debug("L0 backpressure resolved", "l0_files", l0Count)
 			}
 			return nil
 		}
@@ -421,7 +421,7 @@ func (db *DB) waitForL0Backpressure() error {
 		}
 
 		if !loggedBackpressure {
-			db.logger.Info("L0_BACKPRESSURE_WAITING", "l0_files", l0Count, "trigger", db.options.L0StopWritesTrigger)
+			db.logger.Debug("L0 backpressure waiting", "l0_files", l0Count, "trigger", db.options.L0StopWritesTrigger)
 			loggedBackpressure = true
 		}
 
@@ -484,7 +484,7 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 		return err
 	}
 
-	// --- Memtable Rotation Logic ---
+	// --- Memtable Rotation ---
 	db.mu.Lock()
 	// Wait if the flush queue is too long.
 	if len(db.immutableMemtables) > db.options.MaxMemtables {
@@ -839,7 +839,7 @@ func (db *DB) updateCurrentVersion() {
 		memtables = append(memtables, db.immutableMemtables[i])
 	}
 
-	newVersion := db.versions.CreateVersionSnapshot(memtables, db.seq.Load())
+	newVersion := db.versions.CreateVersionSnapshot(db.seq.Load())
 	oldVersion := db.currentVersion.Swap(newVersion)
 
 	// The old version is no longer needed. Mark it for cleanup.
@@ -1075,7 +1075,7 @@ func (db *DB) cleanupOrphanedSSTFiles() error {
 	}
 
 	if orphanedCount > 0 {
-		db.logger.Info("Cleaned up orphaned SST files", "count", orphanedCount)
+		db.logger.Debug("Cleaned up orphaned SST files", "count", orphanedCount)
 	}
 	return nil
 }
@@ -1118,7 +1118,7 @@ func (db *DB) cleanupOldManifestFiles() error {
 	}
 
 	if oldCount > 0 {
-		db.logger.Info("Cleaned up old manifest files", "count", oldCount)
+		db.logger.Debug("Cleaned up old manifest files", "count", oldCount)
 	}
 	return nil
 }

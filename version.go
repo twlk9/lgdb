@@ -10,7 +10,6 @@ import (
 
 	"github.com/twlk9/lgdb/epoch"
 	"github.com/twlk9/lgdb/keys"
-	"github.com/twlk9/lgdb/memtable"
 )
 
 // FileMetadata contains metadata about an SSTable file
@@ -469,7 +468,7 @@ func (vs *VersionSet) rotateManifest(currentVersion *Version) error {
 	vs.manifestWriter = newWriter
 	vs.rangeDeleteWriter = newRangeDeleteWriter
 
-	vs.logger.Info("manifest rotation completed", "old_file_num", oldManifestNum, "new_file_num", newManifestNum)
+	vs.logger.Debug("manifest rotation completed", "old_file_num", oldManifestNum, "new_file_num", newManifestNum)
 	return nil
 }
 
@@ -506,9 +505,10 @@ func (vs *VersionSet) GetCurrentVersion() *Version {
 	return vs.current
 }
 
-// CreateVersionSnapshot atomically captures the current version with memtables for consistent reads
-// This creates a new version that includes both SSTables and memtables for MVCC
-func (vs *VersionSet) CreateVersionSnapshot(memtables []*memtable.MemTable, seqNum uint64) *Version {
+// CreateVersionSnapshot atomically captures the current version for
+// consistent reads This creates a new version that includes both
+// SSTables and memtables for MVCC
+func (vs *VersionSet) CreateVersionSnapshot(seqNum uint64) *Version {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
@@ -618,8 +618,6 @@ func (vs *VersionSet) cleanupOldVersions() {
 	// Filter out versions marked for removal
 	newVersions := make([]*Version, 0, len(vs.versions))
 	removedCount := 0
-	totalMemtables := 0
-	removedMemtables := 0
 
 	activeVersions := 0
 	for _, version := range vs.versions {
@@ -646,10 +644,8 @@ func (vs *VersionSet) cleanupOldVersions() {
 	vs.versions = newVersions
 
 	if removedCount > 0 {
-		vs.logger.Info("cleaned up old versions",
+		vs.logger.Debug("cleaned up old versions",
 			"removed_versions", removedCount,
-			"remaining_versions", len(vs.versions),
-			"removed_memtable_refs", removedMemtables,
-			"total_memtable_refs", totalMemtables)
+			"remaining_versions", len(vs.versions))
 	}
 }

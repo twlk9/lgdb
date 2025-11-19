@@ -55,14 +55,6 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 	// Enter epoch to protect file access for the lifetime of the iterator
 	epochNum := epoch.EnterEpoch()
 
-	// Get current version for consistent snapshot
-	version := db.loadCurrentVersion()
-	if version == nil {
-		// Exit epoch if we can't create iterator
-		epoch.ExitEpoch(epochNum)
-		return &DBIterator{valid: false} // DB not fully initialized
-	}
-
 	if bounds == nil {
 		bounds = &keys.Range{Start: nil, Limit: nil}
 	}
@@ -71,8 +63,17 @@ func (db *DB) NewIteratorWithBounds(bounds *keys.Range, opts *ReadOptions) *DBIt
 		opts = DefaultReadOptions()
 	}
 
-	// get list of memtables
+	// Capture version and memtables atomically under the same lock to ensure
+	// a consistent snapshot (prevent race where version is updated after we load it
+	// but before we capture memtables, causing keys to be invisible)
 	db.mu.RLock()
+	version := db.loadCurrentVersion()
+	if version == nil {
+		db.mu.RUnlock()
+		// Exit epoch if we can't create iterator
+		epoch.ExitEpoch(epochNum)
+		return &DBIterator{valid: false} // DB not fully initialized
+	}
 	memtables := memtable.RefMemTableList(db.memtable, db.immutableMemtables)
 	db.mu.RUnlock()
 

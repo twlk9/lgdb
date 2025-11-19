@@ -95,16 +95,16 @@ func (cm *CompactionManager) ScheduleCompaction() {
 // "wake up -> check for work -> do work -> sleep" cycle.
 func (cm *CompactionManager) compactionWorker() {
 	defer cm.wg.Done()
-	cm.logger.Info("Compaction worker started")
+	cm.logger.Debug("Compaction worker started")
 
 	for {
 		select {
 		case <-cm.closeChan:
-			cm.logger.Info("Compaction worker shutting down")
+			cm.logger.Debug("Compaction worker shutting down")
 			return
 
 		case <-cm.wakeupChan:
-			cm.logger.Info("Compaction work requested - starting compaction")
+			cm.logger.Debug("Compaction work requested - starting compaction")
 			// Handle compaction in a separate function to use defer for cleanup
 			cm.handleCompactionCycle()
 		}
@@ -134,7 +134,7 @@ func (cm *CompactionManager) handleCompactionCycle() {
 	var err error
 	for i, compaction := range compactions {
 		if len(compactions) > 1 {
-			cm.logger.Info("Processing compaction batch",
+			cm.logger.Debug("Processing compaction batch",
 				"progress", fmt.Sprintf("%d/%d", i+1, len(compactions)),
 				"level", compaction.level)
 		}
@@ -151,7 +151,7 @@ func (cm *CompactionManager) handleCompactionCycle() {
 
 		// Check if we need to remove a range delete after this compaction
 		if compaction.rangeDeleteToRemove != 0 {
-			cm.logger.Info("Removing range delete after compaction",
+			cm.logger.Debug("Removing range delete after compaction",
 				"rangeDeleteID", compaction.rangeDeleteToRemove)
 			cm.removeRangeDelete(compaction.rangeDeleteToRemove)
 		}
@@ -170,7 +170,13 @@ func (cm *CompactionManager) handleCompactionCycle() {
 // 2. Apply version edit
 // 3. Clean up obsolete files
 func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *Version) error {
-	cm.logger.Info("Starting compaction", "level", compaction.level, "outputLevel", compaction.outputLevel)
+	inputL0Files := cm.getFileNums(compaction.inputFiles[0])
+	inputL1Files := cm.getFileNums(compaction.inputFiles[1])
+	cm.logger.Debug("Starting compaction",
+		"level", compaction.level,
+		"outputLevel", compaction.outputLevel,
+		"inputL0Files", inputL0Files,
+		"inputL1Files", inputL1Files)
 	startTime := time.Now()
 
 	edit, err := cm.doCompaction(compaction, version)
@@ -188,7 +194,11 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 	// After a compaction, some range deletes might now be obsolete.
 	cm.cleanupObsoleteRangeDeletes()
 
-	cm.logger.Info("Compaction completed", "level", compaction.level, "duration", time.Since(startTime))
+	outputFiles := cm.getFileNums(compaction.outputFiles)
+	cm.logger.Debug("Compaction completed",
+		"level", compaction.level,
+		"duration", time.Since(startTime),
+		"outputFiles", outputFiles)
 	compaction.Cleanup()
 
 	// If we just compacted L0, we might have relieved backpressure.
@@ -247,7 +257,11 @@ func (cm *CompactionManager) pickL0Compaction(version *Version) *Compaction {
 	compaction.inputFiles[0] = selectedL0Files
 	compaction.inputFiles[1] = l1Files
 
-	cm.logger.Info("PICKED_L0_COMPACTION", "l0Files", len(selectedL0Files), "l1Overlap", len(l1Files))
+	cm.logger.Debug("Picked L0 compaction",
+		"l0Files", len(selectedL0Files),
+		"l0FileNums", cm.getFileNums(selectedL0Files),
+		"l1Overlap", len(l1Files),
+		"l1FileNums", cm.getFileNums(l1Files))
 	return compaction
 }
 
@@ -371,7 +385,10 @@ func (cm *CompactionManager) selectFiles(version *Version, files []*FileMetadata
 		selected = cm.expandSelection(version, selected, sorted, level)
 	}
 
-	cm.logger.Info("SELECTED_COMPACTION_FILES", "level", level, "count", len(selected))
+	cm.logger.Debug("Selected compaction files",
+		"level", level,
+		"count", len(selected),
+		"fileNums", cm.getFileNums(selected))
 	return selected
 }
 
@@ -399,7 +416,7 @@ func (cm *CompactionManager) expandSelection(version *Version, selected, allSort
 
 	// If the overlap is too high, start expanding.
 	if overlapRatio > cm.options.CompactionOverlapThreshold {
-		cm.logger.Info("High overlap detected, expanding selection", "level", level, "ratio", overlapRatio)
+		cm.logger.Debug("High overlap detected, expanding selection", "level", level, "ratio", overlapRatio)
 		// Keep adding files until the ratio is acceptable or we hit a limit.
 		for i := len(selected); i < len(allSorted); i++ {
 			expanded := allSorted[:i+1]
@@ -739,7 +756,7 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 		if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
 			cm.logger.Error("Failed to remove obsolete range deletes", "error", err)
 		} else {
-			cm.logger.Info("Removed obsolete range deletes", "count", len(obsoleteIDs))
+			cm.logger.Debug("Removed obsolete range deletes", "count", len(obsoleteIDs))
 		}
 	}
 }
@@ -751,7 +768,7 @@ func (cm *CompactionManager) removeRangeDelete(id uint64) {
 	if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
 		cm.logger.Error("Failed to remove range delete", "error", err, "id", id)
 	} else {
-		cm.logger.Info("Removed range delete", "id", id)
+		cm.logger.Debug("Removed range delete", "id", id)
 	}
 }
 
