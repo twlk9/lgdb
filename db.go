@@ -42,13 +42,15 @@ func (db *DB) rotateMemtable(newMemtable *memtable.MemTable) *memtable.MemTable 
 // removeFromImmutableMemtables finds and removes a memtable from the immutable list.
 // This is called after a memtable has been successfully flushed to an SSTable.
 // Must be called with db.mu lock held.
+// NOTE: Caller must Close() the memtable after updating the version to avoid
+// a race where the memtable is destroyed before the new SSTable is visible.
 func (db *DB) removeFromImmutableMemtables(targetMemtable *memtable.MemTable) bool {
 	for i, immutable := range db.immutableMemtables {
 		if immutable == targetMemtable {
 			// Efficiently remove by shifting left and truncating the slice.
 			copy(db.immutableMemtables[i:], db.immutableMemtables[i+1:])
 			db.immutableMemtables = db.immutableMemtables[:len(db.immutableMemtables)-1]
-			targetMemtable.Close() // Release the memtable's memory.
+			// Don't Close() yet - caller must do it after version is updated
 			return true
 		}
 	}
@@ -346,6 +348,7 @@ func (db *DB) backgroundFlusher() {
 			db.removeFromImmutableMemtables(mt)
 			db.flushBP.Broadcast() // Wake up any waiting writers.
 			db.mu.Unlock()
+			mt.Close() // Safe to close now that it's removed from list
 			continue
 		}
 
@@ -383,6 +386,9 @@ func (db *DB) backgroundFlusher() {
 		db.flushBP.Broadcast() // Tell waiting writers they can proceed.
 		db.updateCurrentVersion()
 		db.mu.Unlock()
+
+		// Close the memtable AFTER version update so new iterators see the SSTable
+		mt.Close()
 
 		// After a flush, it's a good time to check if compactions are needed.
 		db.triggerEpochCleanup()
@@ -722,10 +728,14 @@ func (db *DB) findMaxSequenceInSSTables() (uint64, error) {
 // volatile RAM to persistent storage.
 func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uint64) (*VersionEdit, *RangeDeleteEdit, error) {
 	sstablePath := filepath.Join(db.path, fmt.Sprintf("%06d.sst", fileNumber))
+	tempPath := sstablePath + ".tmp"
+
+	// Ensure temp file is removed on any error path
+	defer os.Remove(tempPath)
 
 	// Memtable flushes always go to L0.
 	wopts := sstable.SSTableOpts{
-		Path:                 sstablePath,
+		Path:                 tempPath, // Write to temp path first
 		Compression:          db.options.GetCompressionForLevel(0),
 		BlockSize:            db.options.BlockSize,
 		BlockRestartInterval: db.options.BlockRestartInterval,
@@ -735,13 +745,12 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 	if err != nil {
 		return nil, nil, err
 	}
-	defer writer.Close()
 
 	iter := memtable.NewIterator()
 	iter.SeekToFirst()
 
 	if !iter.Valid() {
-		// This shouldn't happen if we check the size before calling, but it's a good safeguard.
+		writer.Close()
 		return nil, nil, fmt.Errorf("attempted to flush empty memtable (file: %d)", fileNumber)
 	}
 
@@ -761,13 +770,25 @@ func (db *DB) flushMemtableToSSTable(memtable *memtable.MemTable, fileNumber uin
 		}
 
 		if err := writer.Add(key, value); err != nil {
+			writer.Close()
 			return nil, nil, err
 		}
 		iter.Next()
 	}
 
 	if err := writer.Finish(); err != nil {
+		writer.Close()
 		return nil, nil, err
+	}
+
+	// Explicitly close the writer to ensure file handle is released before rename.
+	if err := writer.Close(); err != nil {
+		return nil, nil, err
+	}
+
+	// Atomically rename the completed temp file to its final destination.
+	if err := os.Rename(tempPath, sstablePath); err != nil {
+		return nil, nil, fmt.Errorf("failed to rename temp sstable: %w", err)
 	}
 
 	fileMetadata := &FileMetadata{

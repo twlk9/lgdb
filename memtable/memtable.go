@@ -194,7 +194,10 @@ func (m *MemTable) UnRef() {
 }
 
 func (m *MemTable) Destroy() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.d = nil
 	m.md = nil
 	m.keyBuf = nil
+	m.n = 0
 }
