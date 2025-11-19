@@ -163,6 +163,14 @@ func (cm *CompactionManager) handleCompactionCycle() {
 	default:
 		// If nobody is listening, that's fine
 	}
+
+	// After a cycle, check if more work is needed and reschedule.
+	// This creates the "churning" effect without blocking the doneChan forever.
+	version2 := cm.versions.GetCurrentVersion()
+	defer version2.MarkForCleanup()
+	if cm.pickCompaction(version2) != nil {
+		cm.ScheduleCompaction()
+	}
 }
 
 // doCompactionWork performs the complete compaction workflow:
