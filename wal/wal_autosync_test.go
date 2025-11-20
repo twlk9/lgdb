@@ -15,7 +15,6 @@ func TestWALAutoSync(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     10 * 1024 * 1024, // 10MB - very high, won't trigger
 		AutoSyncInterval: 100 * time.Millisecond,
 	}
@@ -70,7 +69,6 @@ func TestWALAutoSyncDisabled(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     10 * 1024 * 1024,
 		AutoSyncInterval: 0, // Disabled
 	}
@@ -115,7 +113,6 @@ func TestWALAutoSyncMultipleRecords(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     10 * 1024 * 1024,
 		AutoSyncInterval: 100 * time.Millisecond,
 	}
@@ -163,7 +160,6 @@ func TestWALBytesPerSyncResetsByDoSync(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     100, // Very low threshold
 		AutoSyncInterval: 0,   // Disable time-based for this test
 	}
@@ -212,7 +208,6 @@ func TestWALAutoSyncTickerReset(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     0, // Disable byte-based sync
 		AutoSyncInterval: 200 * time.Millisecond,
 	}
@@ -291,7 +286,6 @@ func TestWALCloseStopsAutoSync(t *testing.T) {
 	opts := WALOpts{
 		Path:             dir,
 		FileNum:          1,
-		MinSyncInterval:  0,
 		BytesPerSync:     10 * 1024 * 1024,
 		AutoSyncInterval: 50 * time.Millisecond,
 	}

@@ -135,7 +135,6 @@ type SyncRequest struct {
 type WALOpts struct {
 	Path             string
 	FileNum          uint64
-	MinSyncInterval  time.Duration
 	BytesPerSync     int
 	AutoSyncInterval time.Duration
 }
@@ -149,7 +148,6 @@ type WAL struct {
 	closed bool
 
 	// Sync timing options
-	minSyncInterval  time.Duration
 	autoSyncInterval time.Duration
 
 	// Background sync options
@@ -159,8 +157,6 @@ type WAL struct {
 
 	// Sync queue and batching
 	syncQueue      *walSyncQueue
-	lastSyncTime   time.Time
-	syncTimer      *time.Timer
 	syncInProgress bool
 
 	// Background auto-sync
@@ -185,7 +181,6 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 		path:             walPath,
 		file:             file,
 		writer:           bufio.NewWriter(file),
-		minSyncInterval:  opts.MinSyncInterval,
 		autoSyncInterval: opts.AutoSyncInterval,
 		bytesPerSync:     opts.BytesPerSync,
 		syncQueue:        &walSyncQueue{},
@@ -292,38 +287,31 @@ func (w *WAL) WriteRangeDelete(seq uint64, startKey, endKey []byte) error {
 // Returns a channel that will receive the sync result
 func (w *WAL) SyncAsync() <-chan error {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	if w.closed {
+		w.mu.Unlock()
 		done := make(chan error, 1)
 		done <- fmt.Errorf("WAL is closed")
 		return done
 	}
 
-	// Create sync request
+	// Create sync request and add to queue
 	req := &SyncRequest{
 		done: make(chan error, 1),
 	}
-
-	// Add to queue
 	w.syncQueue.put(req)
 
-	// Check if we need to delay sync due to minSyncInterval
-	if w.minSyncInterval > 0 {
-		timeSinceLastSync := time.Since(w.lastSyncTime)
-		if timeSinceLastSync < w.minSyncInterval && !w.lastSyncTime.IsZero() {
-			// Start timer if not already running
-			if w.syncTimer == nil {
-				delay := w.minSyncInterval - timeSinceLastSync
-				w.syncTimer = time.AfterFunc(delay, func() {
-					w.processSyncQueue()
-				})
-			}
-			return req.done
-		}
+	// If a sync is already in progress, this request will be picked
+	// up by the existing sync operation
+	if w.syncInProgress {
+		w.mu.Unlock()
+		return req.done
 	}
 
-	// Process sync immediately
+	// Start a new sync operation
+	w.syncInProgress = true
+	w.mu.Unlock()
+
 	go w.processSyncQueue()
 
 	return req.done
@@ -337,28 +325,15 @@ func (w *WAL) Sync() error {
 // processSyncQueue processes all pending sync requests
 func (w *WAL) processSyncQueue() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.closed || w.syncInProgress {
-		return
-	}
-
-	// Clear timer
-	if w.syncTimer != nil {
-		w.syncTimer.Stop()
-		w.syncTimer = nil
-	}
 
 	if w.syncQueue.len() == 0 {
+		w.syncInProgress = false
+		w.mu.Unlock()
 		return
 	}
-
-	w.syncInProgress = true
 
 	// Perform the actual sync
 	err := w.doSync()
-	w.lastSyncTime = time.Now()
-	w.syncInProgress = false
 
 	// Notify all waiting requests
 	for {
@@ -367,6 +342,15 @@ func (w *WAL) processSyncQueue() {
 			break
 		}
 		req.done <- err
+	}
+
+	// Check if there are new pending requests and start another sync if so
+	if w.syncQueue.len() > 0 {
+		w.mu.Unlock()
+		w.processSyncQueue() // Process next batch
+	} else {
+		w.syncInProgress = false
+		w.mu.Unlock()
 	}
 }
 
@@ -420,12 +404,6 @@ func (w *WAL) Close() error {
 	if w.autoSyncTicker != nil {
 		w.autoSyncTicker.Stop()
 		close(w.autoSyncDone)
-	}
-
-	// Stop any pending timer
-	if w.syncTimer != nil {
-		w.syncTimer.Stop()
-		w.syncTimer = nil
 	}
 
 	// Fail any pending sync requests

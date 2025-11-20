@@ -144,59 +144,6 @@ func TestWALBatchedSyncPerformance(t *testing.T) {
 	}
 }
 
-// TestWALMinSyncIntervalBehavior tests the MinSyncInterval behavior
-func TestWALMinSyncIntervalBehavior(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Create WAL with minimum sync interval
-	minInterval := 50 * time.Millisecond
-	wal, err := NewWAL(makeOpts(tempDir, 1, 0, minInterval, 0))
-	if err != nil {
-		t.Fatalf("Failed to create WAL: %v", err)
-	}
-	defer wal.Close()
-
-	// Write a record
-	err = wal.WritePut(1, []byte("key1"), []byte("value1"))
-	if err != nil {
-		t.Fatalf("Failed to write record: %v", err)
-	}
-
-	// First sync should be immediate
-	start := time.Now()
-	err = wal.Sync()
-	if err != nil {
-		t.Fatalf("Failed to sync: %v", err)
-	}
-	firstSyncDuration := time.Since(start)
-
-	// Write another record
-	err = wal.WritePut(2, []byte("key2"), []byte("value2"))
-	if err != nil {
-		t.Fatalf("Failed to write second record: %v", err)
-	}
-
-	// Second sync should be delayed
-	start = time.Now()
-	err = wal.Sync()
-	if err != nil {
-		t.Fatalf("Failed to sync second time: %v", err)
-	}
-	secondSyncDuration := time.Since(start)
-
-	// The second sync should take at least the minimum interval
-	if secondSyncDuration < minInterval {
-		t.Errorf("Second sync should take at least %v, but took %v", minInterval, secondSyncDuration)
-	}
-
-	// First sync should be much faster
-	if firstSyncDuration > minInterval/2 {
-		t.Errorf("First sync took too long: %v", firstSyncDuration)
-	}
-
-	t.Logf("First sync: %v, Second sync: %v (min interval: %v)", firstSyncDuration, secondSyncDuration, minInterval)
-}
-
 // TestWALAsyncSyncBehavior tests async sync behavior for bulk operations
 func TestWALAsyncSyncBehavior(t *testing.T) {
 	tempDir := t.TempDir()
