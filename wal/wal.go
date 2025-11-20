@@ -42,6 +42,91 @@ type WALRecord struct {
 	Checksum uint32
 }
 
+// Encode encodes a WALRecord into the provided buffer.
+// The buffer must be large enough to hold the entire record.
+// The total record size is returned.
+func (r *WALRecord) Encode(buf []byte) int {
+	// Total record size
+	recordSize := HeaderSize + 4 + len(r.Key) + 4 + len(r.Value)
+	offset := 0
+
+	// Write header
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(recordSize))
+	offset += 4
+
+	// Checksum (placeholder)
+	binary.LittleEndian.PutUint32(buf[offset:], 0)
+	offset += 4
+
+	// Sequence number
+	binary.LittleEndian.PutUint64(buf[offset:], r.Seq)
+	offset += 8
+
+	// Record type
+	buf[offset] = uint8(r.Type)
+	offset++
+
+	// Key length and key
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(r.Key)))
+	offset += 4
+	copy(buf[offset:], r.Key)
+	offset += len(r.Key)
+
+	// Value length and value
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(r.Value)))
+	offset += 4
+	copy(buf[offset:], r.Value)
+
+	// Calculate and write checksum
+	checksum := crc32.Checksum(buf[8:recordSize], crc32Table)
+	binary.LittleEndian.PutUint32(buf[4:8], checksum)
+	r.Checksum = checksum
+
+	return recordSize
+}
+
+// Decode decodes a WALRecord from the provided buffer.
+func (r *WALRecord) Decode(buf []byte) error {
+	offset := 0
+
+	// Read checksum
+	r.Checksum = binary.LittleEndian.Uint32(buf[offset:])
+	offset += 4
+
+	// Verify checksum
+	calculatedChecksum := crc32.Checksum(buf[4:], crc32Table)
+	if r.Checksum != calculatedChecksum {
+		return ErrCorruptRecord
+	}
+
+	// Read sequence number
+	r.Seq = binary.LittleEndian.Uint64(buf[offset:])
+	offset += 8
+
+	// Read record type
+	r.Type = keys.Kind(buf[offset])
+	offset++
+
+	// Read key
+	keyLen := binary.LittleEndian.Uint32(buf[offset:])
+	offset += 4
+	r.Key = make([]byte, keyLen)
+	copy(r.Key, buf[offset:offset+int(keyLen)])
+	offset += int(keyLen)
+
+	// Read value
+	valueLen := binary.LittleEndian.Uint32(buf[offset:])
+	offset += 4
+	if valueLen > 0 {
+		r.Value = make([]byte, valueLen)
+		copy(r.Value, buf[offset:offset+int(valueLen)])
+	} else {
+		r.Value = nil
+	}
+
+	return nil
+}
+
 // SyncRequest represents a pending sync request
 type SyncRequest struct {
 	done chan error
@@ -116,35 +201,6 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 	return w, nil
 }
 
-// Open uses an existing wal file. Takes the full path of the file,
-// sync interval, minimum sync interval, bytes per sync, and auto-sync
-// interval
-func Open(path string, syncInt, minSyncInt, autoSyncInt time.Duration, bytesPerSync int) (*WAL, error) {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, err
-	}
-
-	w := &WAL{
-		path:             path,
-		file:             file,
-		writer:           bufio.NewWriter(file),
-		minSyncInterval:  minSyncInt,
-		autoSyncInterval: autoSyncInt,
-		bytesPerSync:     bytesPerSync,
-		syncQueue:        &walSyncQueue{},
-		autoSyncDone:     make(chan struct{}),
-	}
-
-	// Start background auto-sync if enabled
-	if autoSyncInt > 0 {
-		w.autoSyncTicker = time.NewTicker(autoSyncInt)
-		go w.backgroundAutoSync()
-	}
-
-	return w, nil
-}
-
 // Path returns the full file name with path
 func (w *WAL) Path() string {
 	return w.path
@@ -166,49 +222,19 @@ func (w *WAL) WriteRecord(record *WALRecord) error {
 		return fmt.Errorf("WAL is closed")
 	}
 
-	// Calculate total record size
+	// Calculate total record size to get a buffer from the pool
 	recordSize := HeaderSize + 4 + len(record.Key) + 4 + len(record.Value)
-
-	// Create buffer for the record using buffer pool
 	buf := bufferpool.GetBuffer(recordSize)
 	defer bufferpool.PutBuffer(buf)
-	buf = buf[:recordSize]
-	offset := 0
 
-	// Write header
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(recordSize))
-	offset += 4
-
-	// Checksum (placeholder, will be calculated)
-	binary.LittleEndian.PutUint32(buf[offset:], 0)
-	offset += 4
-
-	// Sequence number
-	binary.LittleEndian.PutUint64(buf[offset:], record.Seq)
-	offset += 8
-
-	// Record type
-	buf[offset] = uint8(record.Type)
-	offset += 1
-
-	// Key length and key
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(record.Key)))
-	offset += 4
-	copy(buf[offset:], record.Key)
-	offset += len(record.Key)
-
-	// Value length and value
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(record.Value)))
-	offset += 4
-	copy(buf[offset:], record.Value)
-
-	// Calculate and write checksum
-	checksum := crc32.Checksum(buf[8:], crc32Table) // Skip length and checksum fields
-	binary.LittleEndian.PutUint32(buf[4:8], checksum)
+	// Encode the record into the buffer
+	n := record.Encode(buf)
+	if n != recordSize {
+		return fmt.Errorf("WAL record encoding error: expected %d bytes, got %d", recordSize, n)
+	}
 
 	// Write to file
-	n, err := w.writer.Write(buf)
-	if err != nil {
+	if _, err := w.writer.Write(buf[:n]); err != nil {
 		return err
 	}
 
@@ -457,54 +483,18 @@ func (r *WALReader) ReadRecord() (*WALRecord, error) {
 	}
 
 	// Read the rest of the record
-	buf := make([]byte, recordSize-4) // -4 because we already read the size
+	buf := make([]byte, recordSize-4)
 	if _, err := io.ReadFull(r.reader, buf); err != nil {
 		return nil, err
 	}
 
-	offset := 0
-
-	// Read checksum
-	checksum := binary.LittleEndian.Uint32(buf[offset:])
-	offset += 4
-
-	// Verify checksum
-	calculatedChecksum := crc32.Checksum(buf[4:], crc32Table) // Skip checksum field
-	if checksum != calculatedChecksum {
-		return nil, ErrCorruptRecord
+	// Decode the record
+	record := &WALRecord{}
+	if err := record.Decode(buf); err != nil {
+		return nil, err
 	}
 
-	// Read sequence number
-	seq := binary.LittleEndian.Uint64(buf[offset:])
-	offset += 8
-
-	// Read record type
-	recordType := buf[offset]
-	offset += 1
-
-	// Read key length and key
-	keyLen := binary.LittleEndian.Uint32(buf[offset:])
-	offset += 4
-	key := make([]byte, keyLen)
-	copy(key, buf[offset:offset+int(keyLen)])
-	offset += int(keyLen)
-
-	// Read value length and value
-	valueLen := binary.LittleEndian.Uint32(buf[offset:])
-	offset += 4
-	var value []byte
-	if valueLen > 0 {
-		value = make([]byte, valueLen)
-		copy(value, buf[offset:offset+int(valueLen)])
-	}
-
-	return &WALRecord{
-		Type:     keys.Kind(recordType),
-		Seq:      seq,
-		Key:      key,
-		Value:    value,
-		Checksum: checksum,
-	}, nil
+	return record, nil
 }
 
 // Close closes the WAL reader
