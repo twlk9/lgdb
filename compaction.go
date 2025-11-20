@@ -178,13 +178,13 @@ func (cm *CompactionManager) handleCompactionCycle() {
 // 2. Apply version edit
 // 3. Clean up obsolete files
 func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *Version) error {
-	inputL0Files := cm.getFileNums(compaction.inputFiles[0])
-	inputL1Files := cm.getFileNums(compaction.inputFiles[1])
+	inputLevelFiles := cm.getFileNums(compaction.inputFiles[0])
+	inputOverlapFiles := cm.getFileNums(compaction.inputFiles[1])
 	cm.logger.Debug("Starting compaction",
 		"level", compaction.level,
 		"outputLevel", compaction.outputLevel,
-		"inputL0Files", inputL0Files,
-		"inputL1Files", inputL1Files)
+		"input_level_files", inputLevelFiles,
+		"input_overlap_files", inputOverlapFiles)
 	startTime := time.Now()
 
 	edit, err := cm.doCompaction(compaction, version)
