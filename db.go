@@ -261,7 +261,6 @@ func Open(opts *Options) (*DB, error) {
 		wo := wal.WALOpts{
 			Path:             opts.Path,
 			FileNum:          db.versions.NewFileNumber(),
-			MinSyncInterval:  opts.WALMinSyncInterval,
 			BytesPerSync:     opts.WALBytesPerSync,
 			AutoSyncInterval: opts.WALAutoSyncInterval,
 		}
@@ -447,7 +446,6 @@ func (db *DB) rotateWAL() error {
 		wo := wal.WALOpts{
 			Path:             db.options.Path,
 			FileNum:          currentFileNum,
-			MinSyncInterval:  db.options.WALMinSyncInterval,
 			BytesPerSync:     db.options.WALBytesPerSync,
 			AutoSyncInterval: db.options.WALAutoSyncInterval,
 		}

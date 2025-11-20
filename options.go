@@ -127,15 +127,6 @@ type Options struct {
 	// Default: true (safety first!)
 	Sync bool
 
-	// WALSyncInterval is the interval between periodic WAL syncs. Not currently used.
-	WALSyncInterval time.Duration
-
-	// WALMinSyncInterval is the shortest time we'll wait between WAL syncs.
-	// If writes come in super fast, this lets us batch them into a single `fsync`,
-	// trading a tiny bit of latency for much better throughput.
-	// Default: 500µs
-	WALMinSyncInterval time.Duration
-
 	// WALAutoSyncInterval is the maximum time unflushed WAL data can sit in memory.
 	// A background goroutine will automatically sync the WAL after this interval,
 	// even if WALBytesPerSync threshold hasn't been reached. This is critical for
@@ -215,7 +206,6 @@ func DefaultOptions() *Options {
 		CreateIfMissing:              true,
 		ErrorIfExists:                false,
 		Sync:                         true, // Safety first!
-		WALMinSyncInterval:           DefaultWALMinSyncInterval,
 		WALAutoSyncInterval:          DefaultWALAutoSyncInterval,
 		ReadOnly:                     false,
 		DisableWAL:                   false,

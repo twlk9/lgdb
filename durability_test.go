@@ -297,8 +297,6 @@ func TestCrashDuringCompaction(t *testing.T) {
 // TestDataSafetyGracefulClose tests data safety with graceful close
 func TestDataSafetyGracefulClose(t *testing.T) {
 	opts := DefaultOptions()
-	opts.WALSyncInterval = 10 * time.Millisecond
-	opts.WALMinSyncInterval = 5 * time.Millisecond
 
 	bdb := newBenchmarkDB(&testing.B{}, opts)
 	bdb.generateKeys(100, 16)
@@ -346,8 +344,6 @@ func TestDataSafetyGracefulClose(t *testing.T) {
 // TestDataSafetyCrashSimulation tests data safety with simulated crash (no close)
 func TestDataSafetyCrashSimulation(t *testing.T) {
 	opts := DefaultOptions()
-	opts.WALSyncInterval = 10 * time.Millisecond
-	opts.WALMinSyncInterval = 5 * time.Millisecond
 
 	bdb := newBenchmarkDB(&testing.B{}, opts)
 	bdb.generateKeys(100, 16)
@@ -401,8 +397,6 @@ func TestDataSafetyCrashSimulation(t *testing.T) {
 // TestDataLossStressTest more aggressive test to detect data loss
 func TestDataLossStressTest(t *testing.T) {
 	opts := DefaultOptions()
-	opts.WALSyncInterval = 100 * time.Millisecond // Longer interval
-	opts.WALMinSyncInterval = 50 * time.Millisecond
 
 	bdb := newBenchmarkDB(&testing.B{}, opts)
 	bdb.generateKeys(1000, 16)
@@ -457,8 +451,6 @@ func TestDataLossStressTest(t *testing.T) {
 // TestWriteOptionsBasic tests basic WriteOptions functionality
 func TestWriteOptionsBasic(t *testing.T) {
 	opts := DefaultOptions()
-	opts.WALSyncInterval = 10 * time.Millisecond
-
 	bdb := newBenchmarkDB(&testing.B{}, opts)
 	defer bdb.close()
 
@@ -516,8 +508,7 @@ func TestWriteOptionsBasic(t *testing.T) {
 // TestWALBytesPerSync tests background syncing
 func TestWALBytesPerSync(t *testing.T) {
 	opts := DefaultOptions()
-	opts.WALBytesPerSync = 1024                   // Sync every 1KB
-	opts.WALSyncInterval = 100 * time.Millisecond // Don't let timer interfere
+	opts.WALBytesPerSync = 1024 // Sync every 1KB
 
 	bdb := newBenchmarkDB(&testing.B{}, opts)
 	defer bdb.close()
@@ -588,7 +579,6 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 			name: "NoSync",
 			opts: func() *Options {
 				opts := DefaultOptions()
-				opts.WALSyncInterval = 0 // Disable periodic sync
 				return opts
 			}(),
 		},
@@ -596,7 +586,6 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 			name: "FastSync",
 			opts: func() *Options {
 				opts := DefaultOptions()
-				opts.WALSyncInterval = 1 * time.Millisecond
 				return opts
 			}(),
 		},
@@ -604,7 +593,6 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 			name: "SlowSync",
 			opts: func() *Options {
 				opts := DefaultOptions()
-				opts.WALSyncInterval = 10 * time.Millisecond
 				return opts
 			}(),
 		},
@@ -612,7 +600,6 @@ func BenchmarkDurabilityOptions(b *testing.B) {
 			name: "SyncEveryWrite",
 			opts: func() *Options {
 				opts := DefaultOptions()
-				opts.WALSyncInterval = 0 // Use write options instead
 				return opts
 			}(),
 		},

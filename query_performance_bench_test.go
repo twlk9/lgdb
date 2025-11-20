@@ -23,7 +23,6 @@ func BenchmarkRangeQueryPerformance(b *testing.B) {
 		b.Run(tt.name, func(b *testing.B) {
 			opts := DefaultOptions()
 			// Use async writes for fast setup
-			opts.WALSyncInterval = 100 * time.Millisecond
 
 			bdb := newBenchmarkDB(b, opts)
 			defer bdb.close()
@@ -81,7 +80,6 @@ func BenchmarkGetPerformance(b *testing.B) {
 	for _, tt := range tests {
 		b.Run(tt.name, func(b *testing.B) {
 			opts := DefaultOptions()
-			opts.WALSyncInterval = 100 * time.Millisecond
 
 			bdb := newBenchmarkDB(b, opts)
 			defer bdb.close()
@@ -126,7 +124,6 @@ func BenchmarkGetPerformance(b *testing.B) {
 // BenchmarkIteratorOverhead tests iterator creation and basic operations
 func BenchmarkIteratorOverhead(b *testing.B) {
 	opts := DefaultOptions()
-	opts.WALSyncInterval = 100 * time.Millisecond
 
 	bdb := newBenchmarkDB(b, opts)
 	defer bdb.close()

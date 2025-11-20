@@ -391,8 +391,6 @@ func TestIteratorSeek(t *testing.T) {
 	opts.Path = tmpDir
 	opts.WriteBufferSize = 1024
 	opts.Sync = false
-	opts.WALSyncInterval = 0
-	opts.WALMinSyncInterval = 0
 
 	db, err := Open(opts)
 	if err != nil {
