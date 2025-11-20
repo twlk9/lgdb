@@ -204,6 +204,86 @@ func TestWALBytesPerSyncResetsByDoSync(t *testing.T) {
 	t.Log("✓ doSync properly resets bytesWrittenSinceSync counter")
 }
 
+// TestWALAutoSyncTickerReset verifies that the auto-sync timer is reset
+// after explicit syncs, preventing redundant fsyncs
+func TestWALAutoSyncTickerReset(t *testing.T) {
+	dir := t.TempDir()
+
+	opts := WALOpts{
+		Path:             dir,
+		FileNum:          1,
+		MinSyncInterval:  0,
+		BytesPerSync:     0, // Disable byte-based sync
+		AutoSyncInterval: 200 * time.Millisecond,
+	}
+
+	w, err := NewWAL(opts)
+	if err != nil {
+		t.Fatalf("Failed to create WAL: %v", err)
+	}
+	defer w.Close()
+
+	// Write a record
+	record := &WALRecord{
+		Type:  keys.KindSet,
+		Seq:   1,
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	}
+
+	if err := w.WriteRecord(record); err != nil {
+		t.Fatalf("Failed to write record: %v", err)
+	}
+
+	// Wait 100ms (half the auto-sync interval)
+	time.Sleep(100 * time.Millisecond)
+
+	// Explicitly sync - this should reset the ticker
+	if err := w.Sync(); err != nil {
+		t.Fatalf("Failed to sync: %v", err)
+	}
+
+	// Write another record immediately after sync
+	record2 := &WALRecord{
+		Type:  keys.KindSet,
+		Seq:   2,
+		Key:   []byte("key2"),
+		Value: []byte("value2"),
+	}
+
+	if err := w.WriteRecord(record2); err != nil {
+		t.Fatalf("Failed to write record: %v", err)
+	}
+
+	// Wait another 150ms (total 250ms from start, but only 150ms since explicit sync)
+	// Without ticker reset, auto-sync would have fired at 200ms
+	// With ticker reset, auto-sync won't fire until 300ms (200ms after the explicit sync)
+	time.Sleep(150 * time.Millisecond)
+
+	// Data should still be unflushed because ticker was reset
+	w.mu.Lock()
+	bytesWaiting := w.bytesWrittenSinceSync
+	w.mu.Unlock()
+
+	if bytesWaiting == 0 {
+		t.Fatal("Expected unflushed data - ticker reset may not be working")
+	}
+
+	// Wait for the reset timer to fire (another 100ms, total 400ms from start)
+	time.Sleep(100 * time.Millisecond)
+
+	// Now data should be synced
+	w.mu.Lock()
+	bytesAfter := w.bytesWrittenSinceSync
+	w.mu.Unlock()
+
+	if bytesAfter != 0 {
+		t.Fatalf("Expected data to be synced after ticker reset interval, but %d bytes waiting", bytesAfter)
+	}
+
+	t.Log("✓ Auto-sync ticker correctly resets after explicit sync")
+}
+
 // TestWALCloseStopsAutoSync verifies that Close() stops the auto-sync goroutine
 func TestWALCloseStopsAutoSync(t *testing.T) {
 	dir := t.TempDir()

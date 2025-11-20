@@ -354,13 +354,20 @@ func (w *WAL) doSync() error {
 	}
 	// Reset the bytes counter after successful sync
 	w.bytesWrittenSinceSync = 0
+
+	// Reset the auto-sync timer since we just synced
+	// This prevents redundant syncs when byte-triggered or explicit syncs happen
+	if w.autoSyncTicker != nil {
+		w.autoSyncTicker.Reset(w.autoSyncInterval)
+	}
+
 	return nil
 }
 
 // backgroundAutoSync runs in a goroutine and periodically syncs the
-// WAL based on time rather than bytes written. This prevents
-// unbounded data loss on low-throughput workloads where bytesPerSync
-// may never trigger.
+// WAL based on time rather than bytes written. This prevents data
+// loss on low-throughput workloads where bytesPerSync may never
+// trigger.
 func (w *WAL) backgroundAutoSync() {
 	for {
 		select {
