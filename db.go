@@ -259,10 +259,11 @@ func Open(opts *Options) (*DB, error) {
 	// Initialize a new WAL for future writes.
 	if !opts.ReadOnly && !opts.DisableWAL {
 		wo := wal.WALOpts{
-			Path:            opts.Path,
-			FileNum:         db.versions.NewFileNumber(),
-			MinSyncInterval: opts.WALMinSyncInterval,
-			BytesPerSync:    opts.WALBytesPerSync,
+			Path:             opts.Path,
+			FileNum:          db.versions.NewFileNumber(),
+			MinSyncInterval:  opts.WALMinSyncInterval,
+			BytesPerSync:     opts.WALBytesPerSync,
+			AutoSyncInterval: opts.WALAutoSyncInterval,
 		}
 		newWAL, err := wal.NewWAL(wo)
 		if err != nil {
@@ -444,10 +445,11 @@ func (db *DB) rotateWAL() error {
 		ogwal := db.wal
 		currentFileNum := db.versions.NewFileNumber()
 		wo := wal.WALOpts{
-			Path:            db.options.Path,
-			FileNum:         currentFileNum,
-			MinSyncInterval: db.options.WALMinSyncInterval,
-			BytesPerSync:    db.options.WALBytesPerSync,
+			Path:             db.options.Path,
+			FileNum:          currentFileNum,
+			MinSyncInterval:  db.options.WALMinSyncInterval,
+			BytesPerSync:     db.options.WALBytesPerSync,
+			AutoSyncInterval: db.options.WALAutoSyncInterval,
 		}
 		newWAL, err := wal.NewWAL(wo)
 		if err != nil {

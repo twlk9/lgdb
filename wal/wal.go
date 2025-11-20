@@ -25,8 +25,9 @@ const (
 	HeaderSize = 4 + 4 + 8 + 1 // length + checksum + seq + type
 )
 
-// CRC32 table using the same polynomial as the original implementation (0xEDB88320)
-// This ensures compatibility while using the optimized standard library implementation
+// CRC32 table using the same polynomial as the original
+// implementation (0xEDB88320) This ensures compatibility while using
+// the optimized standard library implementation
 var crc32Table = crc32.MakeTable(0xEDB88320)
 
 // ErrCorruptRecord indicates a WAL record failed checksum validation
@@ -47,10 +48,11 @@ type SyncRequest struct {
 }
 
 type WALOpts struct {
-	Path            string
-	FileNum         uint64
-	MinSyncInterval time.Duration
-	BytesPerSync    int
+	Path             string
+	FileNum          uint64
+	MinSyncInterval  time.Duration
+	BytesPerSync     int
+	AutoSyncInterval time.Duration
 }
 
 // WAL represents the Write-Ahead Log
@@ -62,7 +64,8 @@ type WAL struct {
 	closed bool
 
 	// Sync timing options
-	minSyncInterval time.Duration
+	minSyncInterval  time.Duration
+	autoSyncInterval time.Duration
 
 	// Background sync options
 	bytesPerSync          int
@@ -74,6 +77,10 @@ type WAL struct {
 	lastSyncTime   time.Time
 	syncTimer      *time.Timer
 	syncInProgress bool
+
+	// Background auto-sync
+	autoSyncTicker *time.Ticker
+	autoSyncDone   chan struct{}
 }
 
 // NewWAL creates a new WAL instance
@@ -89,32 +96,53 @@ func NewWAL(opts WALOpts) (*WAL, error) {
 		return nil, err
 	}
 
-	return &WAL{
-		path:            walPath,
-		file:            file,
-		writer:          bufio.NewWriter(file),
-		minSyncInterval: opts.MinSyncInterval,
-		bytesPerSync:    opts.BytesPerSync,
-		syncQueue:       &walSyncQueue{},
-	}, nil
+	w := &WAL{
+		path:             walPath,
+		file:             file,
+		writer:           bufio.NewWriter(file),
+		minSyncInterval:  opts.MinSyncInterval,
+		autoSyncInterval: opts.AutoSyncInterval,
+		bytesPerSync:     opts.BytesPerSync,
+		syncQueue:        &walSyncQueue{},
+		autoSyncDone:     make(chan struct{}),
+	}
+
+	// Start background auto-sync if enabled
+	if opts.AutoSyncInterval > 0 {
+		w.autoSyncTicker = time.NewTicker(opts.AutoSyncInterval)
+		go w.backgroundAutoSync()
+	}
+
+	return w, nil
 }
 
 // Open uses an existing wal file. Takes the full path of the file,
-// sync interval, minimum sync interval and bytes per sync as
-// arguments
-func Open(path string, syncInt, minSyncInt time.Duration, bytesPerSync int) (*WAL, error) {
+// sync interval, minimum sync interval, bytes per sync, and auto-sync
+// interval
+func Open(path string, syncInt, minSyncInt, autoSyncInt time.Duration, bytesPerSync int) (*WAL, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
-	return &WAL{
-		path:            path,
-		file:            file,
-		writer:          bufio.NewWriter(file),
-		minSyncInterval: minSyncInt,
-		bytesPerSync:    bytesPerSync,
-		syncQueue:       &walSyncQueue{},
-	}, nil
+
+	w := &WAL{
+		path:             path,
+		file:             file,
+		writer:           bufio.NewWriter(file),
+		minSyncInterval:  minSyncInt,
+		autoSyncInterval: autoSyncInt,
+		bytesPerSync:     bytesPerSync,
+		syncQueue:        &walSyncQueue{},
+		autoSyncDone:     make(chan struct{}),
+	}
+
+	// Start background auto-sync if enabled
+	if autoSyncInt > 0 {
+		w.autoSyncTicker = time.NewTicker(autoSyncInt)
+		go w.backgroundAutoSync()
+	}
+
+	return w, nil
 }
 
 // Path returns the full file name with path
@@ -190,10 +218,9 @@ func (w *WAL) WriteRecord(record *WALRecord) error {
 	// Track bytes written since last sync (for background syncing)
 	w.bytesWrittenSinceSync += int64(n)
 
-	// Check if we should trigger background sync
+	// Check if we should trigger background sync based on bytes
 	if w.bytesPerSync > 0 && w.bytesWrittenSinceSync >= int64(w.bytesPerSync) {
-		// Reset counter and trigger async sync in background
-		w.bytesWrittenSinceSync = 0
+		// Trigger async sync in background (counter reset by doSync)
 		go func() {
 			_ = w.SyncAsync()
 		}()
@@ -322,7 +349,28 @@ func (w *WAL) doSync() error {
 	if err := w.writer.Flush(); err != nil {
 		return err
 	}
-	return w.file.Sync()
+	if err := w.file.Sync(); err != nil {
+		return err
+	}
+	// Reset the bytes counter after successful sync
+	w.bytesWrittenSinceSync = 0
+	return nil
+}
+
+// backgroundAutoSync runs in a goroutine and periodically syncs the
+// WAL based on time rather than bytes written. This prevents
+// unbounded data loss on low-throughput workloads where bytesPerSync
+// may never trigger.
+func (w *WAL) backgroundAutoSync() {
+	for {
+		select {
+		case <-w.autoSyncTicker.C:
+			_ = w.SyncAsync()
+
+		case <-w.autoSyncDone:
+			return
+		}
+	}
 }
 
 // Close closes the WAL
@@ -334,6 +382,12 @@ func (w *WAL) Close() error {
 		return nil
 	}
 	w.closed = true
+
+	// Stop background auto-sync goroutine
+	if w.autoSyncTicker != nil {
+		w.autoSyncTicker.Stop()
+		close(w.autoSyncDone)
+	}
 
 	// Stop any pending timer
 	if w.syncTimer != nil {
@@ -349,10 +403,9 @@ func (w *WAL) Close() error {
 		}
 		req.done <- fmt.Errorf("WAL is closed")
 	}
-	if err := w.writer.Flush(); err != nil {
-		return err
-	}
-	if err := w.file.Sync(); err != nil {
+
+	// Final sync
+	if err := w.doSync(); err != nil {
 		return err
 	}
 	if err := w.file.Close(); err != nil {

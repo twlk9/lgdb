@@ -63,11 +63,11 @@ type keyLocation struct {
 
 // Block represents a decoded block
 type Block struct {
-	data              []byte
-	restarts          []uint32
-	numEntries        uint32
+	data                []byte
+	restarts            []uint32
+	numEntries          uint32
 	restartKeyLocations []keyLocation // Cached key locations at restart points for faster seeking
-	restartEntryIndx  []int         // tracking for entry points
+	restartEntryIndx    []int         // tracking for entry points
 }
 
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
@@ -488,11 +488,11 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 	numEntries, restartEntryIndx, restartKeyLocations := r.parseBlockAndBuildIndex(data[:dataSize], restarts)
 
 	b := &Block{
-		data:              data[:dataSize],
-		restarts:          restarts,
-		numEntries:        numEntries,
+		data:                data[:dataSize],
+		restarts:            restarts,
+		numEntries:          numEntries,
 		restartKeyLocations: restartKeyLocations,
-		restartEntryIndx:  restartEntryIndx,
+		restartEntryIndx:    restartEntryIndx,
 	}
 	return b, nil
 }

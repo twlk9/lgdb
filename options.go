@@ -31,6 +31,7 @@ var (
 	DefaultBlockMinEntries                    = 4
 	DefaultMaxManifestFileSize          int64 = 256 * MiB
 	DefaultWALMinSyncInterval                 = 500 * time.Microsecond
+	DefaultWALAutoSyncInterval                = 30 * time.Second
 	DefaultCompactionOverlapThreshold         = 4.0
 	DefaultCompactionMaxExpansionFiles        = 20
 	DefaultCompactionTargetOverlapRatio       = 2.0
@@ -135,6 +136,14 @@ type Options struct {
 	// Default: 500µs
 	WALMinSyncInterval time.Duration
 
+	// WALAutoSyncInterval is the maximum time unflushed WAL data can sit in memory.
+	// A background goroutine will automatically sync the WAL after this interval,
+	// even if WALBytesPerSync threshold hasn't been reached. This is critical for
+	// low-throughput workloads to prevent unbounded data loss on crashes.
+	// Set to 0 to disable time-based auto-sync (not recommended for production).
+	// Default: 30 seconds
+	WALAutoSyncInterval time.Duration
+
 	// ReadOnly mode, as the name implies, prevents all write operations.
 	ReadOnly bool
 
@@ -207,6 +216,7 @@ func DefaultOptions() *Options {
 		ErrorIfExists:                false,
 		Sync:                         true, // Safety first!
 		WALMinSyncInterval:           DefaultWALMinSyncInterval,
+		WALAutoSyncInterval:          DefaultWALAutoSyncInterval,
 		ReadOnly:                     false,
 		DisableWAL:                   false,
 		WALBytesPerSync:              0, // Disabled by default
