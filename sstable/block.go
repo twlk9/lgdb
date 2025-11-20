@@ -21,9 +21,6 @@ func NewBlockBuilder(blockSize, restartInterval, minEntries int) *BlockBuilder {
 	if restartInterval == 0 {
 		restartInterval = RestartInterval
 	}
-	if blockSize == 0 {
-		blockSize = BlockSize
-	}
 	if minEntries == 0 {
 		minEntries = 4
 	}

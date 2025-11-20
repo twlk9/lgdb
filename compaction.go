@@ -617,6 +617,7 @@ func (cm *CompactionManager) createOutputFile(fileNum uint64, level int) (*sstab
 		Logger:               cm.logger,
 		BlockSize:            cm.options.BlockSize,
 		BlockRestartInterval: cm.options.BlockRestartInterval,
+		BlockMinEntries:      cm.options.BlockMinEntries,
 	}
 	return sstable.NewSSTableWriter(wopts)
 }

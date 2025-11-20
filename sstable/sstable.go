@@ -14,9 +14,6 @@ import (
 )
 
 const (
-	// BlockSize is the size of each data block
-	BlockSize = 4 * 1024 // 4KB
-
 	// Restart interval - how often to place restart points
 	RestartInterval = 16
 
