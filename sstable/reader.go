@@ -55,13 +55,19 @@ type SSTableReader struct {
 	buffers *EntryBuffers
 }
 
+// keyLocation stores the position of a key within a block's data.
+type keyLocation struct {
+	offset int
+	length int
+}
+
 // Block represents a decoded block
 type Block struct {
-	data             []byte
-	restarts         []uint32
-	numEntries       uint32
-	restartKeys      [][]byte // Cached keys at restart points for faster seeking
-	restartEntryIndx []int    // tracking for entry points
+	data              []byte
+	restarts          []uint32
+	numEntries        uint32
+	restartKeyLocations []keyLocation // Cached key locations at restart points for faster seeking
+	restartEntryIndx  []int         // tracking for entry points
 }
 
 // NewSSTableReader creates a new SSTable reader by opening the file at the given path
@@ -479,20 +485,20 @@ func (r *SSTableReader) parseBlock(data []byte) (*Block, error) {
 	dataSize := dataLen - metadataSize
 
 	// Parse block metadata and cache restart keys in a single pass
-	numEntries, restartEntryIndx, restartKeys := r.parseBlockAndBuildIndex(data[:dataSize], restarts)
+	numEntries, restartEntryIndx, restartKeyLocations := r.parseBlockAndBuildIndex(data[:dataSize], restarts)
 
 	b := &Block{
-		data:             data[:dataSize],
-		restarts:         restarts,
-		numEntries:       numEntries,
-		restartKeys:      restartKeys,
-		restartEntryIndx: restartEntryIndx,
+		data:              data[:dataSize],
+		restarts:          restarts,
+		numEntries:        numEntries,
+		restartKeyLocations: restartKeyLocations,
+		restartEntryIndx:  restartEntryIndx,
 	}
 	return b, nil
 }
 
 // parseBlockAndBuildIndex parses block data to count entries and build restartEntryIndx.
-func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) (uint32, []int, [][]byte) {
+func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) (uint32, []int, []keyLocation) {
 	if len(data) == 0 {
 		return 0, nil, nil
 	}
@@ -500,7 +506,7 @@ func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) 
 	var numEntries uint32
 	offset := 0
 	restartEntryIndx := make([]int, len(restarts))
-	restartKeys := make([][]byte, len(restarts))
+	restartKeyLocations := make([]keyLocation, len(restarts))
 	currentRestart := 0
 
 	for offset < len(data) {
@@ -508,24 +514,23 @@ func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) 
 			restartEntryIndx[currentRestart] = int(numEntries)
 
 			// At restart points, shared length is always 0
-			// We can directly cache the key here
-			keyOffset := offset
+			// We can directly cache the key's location here
+			keyLocationOffset := offset
 			// Skip shared length (always 0 at restart points)
-			_, n := binary.Uvarint(data[keyOffset:])
+			_, n := binary.Uvarint(data[keyLocationOffset:])
 			if n > 0 {
-				keyOffset += n
+				keyLocationOffset += n
 				// Read unshared key length
-				unshared, n := binary.Uvarint(data[keyOffset:])
+				unshared, n := binary.Uvarint(data[keyLocationOffset:])
 				if n > 0 {
-					keyOffset += n
+					keyLocationOffset += n
 					// Skip value length
-					_, n = binary.Uvarint(data[keyOffset:])
+					_, n = binary.Uvarint(data[keyLocationOffset:])
 					if n > 0 {
-						keyOffset += n
-						// Read the key
-						if keyOffset+int(unshared) <= len(data) {
-							restartKeys[currentRestart] = make([]byte, unshared)
-							copy(restartKeys[currentRestart], data[keyOffset:keyOffset+int(unshared)])
+						keyLocationOffset += n
+						// Store the key's location
+						if keyLocationOffset+int(unshared) <= len(data) {
+							restartKeyLocations[currentRestart] = keyLocation{offset: keyLocationOffset, length: int(unshared)}
 						}
 					}
 				}
@@ -562,7 +567,7 @@ func (r *SSTableReader) parseBlockAndBuildIndex(data []byte, restarts []uint32) 
 		numEntries++
 	}
 
-	return numEntries, restartEntryIndx, restartKeys
+	return numEntries, restartEntryIndx, restartKeyLocations
 }
 
 // EntryBuffers provides reusable buffers for key-value reconstruction
@@ -619,10 +624,13 @@ func (b *Block) getEntry(index int, buffers *EntryBuffers) error {
 	startEntryIndex := b.restartEntryIndx[restartIndex]
 	targetEntryInInterval := index - startEntryIndex
 
-	// Initialize lastKey from cached restart keys if available
+	// Initialize lastKey from cached restart key locations if available
 	var lastKey []byte
-	if restartIndex < len(b.restartKeys) && b.restartKeys[restartIndex] != nil {
-		lastKey = b.restartKeys[restartIndex]
+	if restartIndex < len(b.restartKeyLocations) {
+		loc := b.restartKeyLocations[restartIndex]
+		if loc.offset+loc.length <= len(b.data) {
+			lastKey = b.data[loc.offset : loc.offset+loc.length]
+		}
 	}
 
 	// Scan to target entry
@@ -947,7 +955,7 @@ func (b *Block) seekToRestartPoint(target keys.EncodedKey) (int, int, error) {
 		return 0, 0, nil
 	}
 
-	// Binary search on cached restart keys
+	// Binary search on cached restart key locations
 	left := 0
 	right := len(b.restarts) - 1
 	result := -1
@@ -955,16 +963,22 @@ func (b *Block) seekToRestartPoint(target keys.EncodedKey) (int, int, error) {
 	for left <= right {
 		mid := left + (right-left)/2
 
-		// Use cached restart key for comparison
-		if mid < len(b.restartKeys) && b.restartKeys[mid] != nil {
-			// Decode restart key for comparison
-			restartKey := keys.EncodedKey(b.restartKeys[mid])
+		// Use cached restart key location for comparison
+		if mid < len(b.restartKeyLocations) {
+			loc := b.restartKeyLocations[mid]
+			if loc.offset+loc.length <= len(b.data) {
+				// Create a temporary slice for the key for comparison
+				restartKey := keys.EncodedKey(b.data[loc.offset : loc.offset+loc.length])
 
-			cmp := restartKey.Compare(target)
-			if cmp >= 0 {
-				result = mid
-				right = mid - 1
+				cmp := restartKey.Compare(target)
+				if cmp >= 0 {
+					result = mid
+					right = mid - 1
+				} else {
+					left = mid + 1
+				}
 			} else {
+				// Corrupt data, fallback to linear scan behavior
 				left = mid + 1
 			}
 		} else {
