@@ -292,3 +292,128 @@ func TestRangeDeleteWithCompaction(t *testing.T) {
 		}
 	}
 }
+
+func TestRangeDeleteWithSnapshotIsolation(t *testing.T) {
+	dir := t.TempDir()
+	opts := DefaultOptions()
+	opts.Path = dir
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+
+	// Write keys a-e
+	for i := byte('a'); i <= byte('e'); i++ {
+		key := []byte{i}
+		value := []byte{i}
+		if err := db.Put(key, value); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	// Create a "snapshot" by creating an iterator before the deletion.
+	snapshotIter := db.NewIterator(nil)
+	defer snapshotIter.Close()
+
+	// Delete range [b, d) after the snapshot iterator is created.
+	err = db.DeleteRange(keys.UserKey([]byte{'b'}), keys.UserKey([]byte{'d'}))
+	if err != nil {
+		t.Fatalf("DeleteRange failed: %v", err)
+	}
+
+	// 1. Verify iterator from the "snapshot" is NOT affected.
+	var snapshotKeys []string
+	for snapshotIter.SeekToFirst(); snapshotIter.Valid(); snapshotIter.Next() {
+		snapshotKeys = append(snapshotKeys, string(snapshotIter.Key()))
+	}
+
+	expectedSnapshotKeys := []string{"a", "b", "c", "d", "e"}
+	if len(snapshotKeys) != len(expectedSnapshotKeys) {
+		t.Fatalf("Snapshot iterator: expected %d keys, got %d. Keys: %v", len(expectedSnapshotKeys), len(snapshotKeys), snapshotKeys)
+	}
+	for i, k := range expectedSnapshotKeys {
+		if snapshotKeys[i] != k {
+			t.Errorf("Snapshot iterator: expected key %s at index %d, got %s", k, i, snapshotKeys[i])
+		}
+	}
+
+	// 2. Verify a new ("live") iterator IS affected.
+	liveIter := db.NewIterator(nil)
+	defer liveIter.Close()
+
+	var liveKeys []string
+	for liveIter.SeekToFirst(); liveIter.Valid(); liveIter.Next() {
+		liveKeys = append(liveKeys, string(liveIter.Key()))
+	}
+
+	expectedLiveKeys := []string{"a", "d", "e"}
+	if len(liveKeys) != len(expectedLiveKeys) {
+		t.Fatalf("Live iterator: expected %d keys, got %d. Keys: %v", len(expectedLiveKeys), len(liveKeys), liveKeys)
+	}
+	for i, k := range expectedLiveKeys {
+		if liveKeys[i] != k {
+			t.Errorf("Live iterator: expected key %s at index %d, got %s", k, i, liveKeys[i])
+		}
+	}
+}
+
+func TestRangeDeleteOverlappingAndAdjacent(t *testing.T) {
+	dir := t.TempDir()
+	opts := DefaultOptions()
+	opts.Path = dir
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open DB: %v", err)
+	}
+	defer db.Close()
+
+	// Write keys 0-19
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("key%02d", i)
+		val := fmt.Sprintf("val%02d", i)
+		if err := db.Put([]byte(key), []byte(val)); err != nil {
+			t.Fatalf("Put failed: %v", err)
+		}
+	}
+
+	// Add an overlapping range delete: [2, 8) and [5, 12) -> should become [2, 12)
+	err = db.DeleteRange([]byte("key02"), []byte("key08"))
+	if err != nil {
+		t.Fatalf("DeleteRange failed: %v", err)
+	}
+	err = db.DeleteRange([]byte("key05"), []byte("key12"))
+	if err != nil {
+		t.Fatalf("DeleteRange failed: %v", err)
+	}
+
+	// Add adjacent range deletes: [15, 17) and [17, 18) -> should become [15, 18)
+	err = db.DeleteRange([]byte("key15"), []byte("key17"))
+	if err != nil {
+		t.Fatalf("DeleteRange failed: %v", err)
+	}
+	err = db.DeleteRange([]byte("key17"), []byte("key18"))
+	if err != nil {
+		t.Fatalf("DeleteRange failed: %v", err)
+	}
+
+	// Verify
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("key%02d", i)
+		_, err := db.Get([]byte(key))
+
+		isDeleted := (i >= 2 && i < 12) || (i >= 15 && i < 18)
+
+		if isDeleted {
+			if err != ErrNotFound {
+				t.Errorf("Key %s should be deleted, but it was found", key)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("Key %s should exist, but got error: %v", key, err)
+			}
+		}
+	}
+}

@@ -85,6 +85,8 @@ type MergeIterator struct {
 
 	// A list of active range tombstones that can hide keys.
 	rangeDeletes []RangeTombstone
+	// An index to optimize range delete checks, see isCoveredByRangeDelete.
+	rangeDeleteIndex int
 
 	err error
 	seq uint64 // If > 0, the iterator will only see keys with a sequence number <= seq.
@@ -285,19 +287,37 @@ func (it *MergeIterator) Next() {
 }
 
 // isCoveredByRangeDelete checks if a key is hidden by an active range delete.
+// It leverages the fact that the rangeDeletes slice is sorted by StartKey.
+// The 'rangeDeleteIndex' is used as a starting point for the search to avoid
+// re-scanning tombstones that are before the current key.
 func (it *MergeIterator) isCoveredByRangeDelete(key keys.EncodedKey) bool {
 	if len(it.rangeDeletes) == 0 {
 		return false
 	}
 	userKey := key.UserKey()
-	for _, rt := range it.rangeDeletes {
-		// The range tombstone only applies if it's newer than the key.
-		if rt.Seq > key.Seq() {
-			if userKey.Compare(rt.Start) >= 0 && userKey.Compare(rt.End) < 0 {
-				return true
-			}
+
+	// Advance the index past any tombstones that end before our current key.
+	// This is the "zipper" part of the algorithm.
+	for it.rangeDeleteIndex < len(it.rangeDeletes) &&
+		userKey.Compare(it.rangeDeletes[it.rangeDeleteIndex].End) >= 0 {
+		it.rangeDeleteIndex++
+	}
+
+	// Now check for coverage from the current index onwards.
+	for i := it.rangeDeleteIndex; i < len(it.rangeDeletes); i++ {
+		rt := &it.rangeDeletes[i]
+
+		// If the tombstone starts after our key, no further tombstones can cover it.
+		if userKey.Compare(rt.Start) < 0 {
+			break
+		}
+
+		// Check for actual coverage (Start <= userKey < End) and sequence number.
+		if rt.Seq > key.Seq() && userKey.Compare(rt.End) < 0 {
+			return true
 		}
 	}
+
 	return false
 }
 
@@ -343,6 +363,7 @@ func (it *MergeIterator) SeekToFirst() {
 	it.err = nil
 	it.current = nil
 	it.winningKey = nil
+	it.rangeDeleteIndex = 0 // Reset tombstone index
 	for _, iter := range it.iterators {
 		iter.SeekToFirst()
 	}
@@ -354,6 +375,7 @@ func (it *MergeIterator) Seek(target keys.EncodedKey) {
 	it.err = nil
 	it.current = nil
 	it.winningKey = nil
+	it.rangeDeleteIndex = 0 // Reset tombstone index
 	for _, iter := range it.iterators {
 		iter.Seek(target)
 	}

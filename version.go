@@ -1,10 +1,12 @@
 package lgdb
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -185,6 +187,14 @@ func (v *Version) AddRangeDelete(rt RangeTombstone) {
 	v.rangeDeletes = append(v.rangeDeletes, rt)
 }
 
+// SortRangeDeletes sorts the range tombstones by start key.
+// This is crucial for efficient iterator performance.
+func (v *Version) SortRangeDeletes() {
+	sort.Slice(v.rangeDeletes, func(i, j int) bool {
+		return bytes.Compare(v.rangeDeletes[i].Start, v.rangeDeletes[j].Start) < 0
+	})
+}
+
 // RemoveRangeDelete removes a range delete by ID
 func (v *Version) RemoveRangeDelete(id uint64) {
 	for i, rt := range v.rangeDeletes {
@@ -312,6 +322,8 @@ func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDelete
 		for _, id := range rangeDeleteEdit.removedDeletes {
 			newVersion.RemoveRangeDelete(id)
 		}
+		// Sort after all modifications to ensure efficient lookups
+		newVersion.SortRangeDeletes()
 	}
 
 	// Initialize manifest writer if needed
