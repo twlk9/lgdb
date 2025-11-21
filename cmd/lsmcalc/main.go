@@ -17,26 +17,26 @@ const (
 )
 
 type Config struct {
-	TotalSize             int64   // Target total database size
-	WriteBufferSize       int64   // Base memtable/L0 file size
-	LevelSizeMultiplier   float64 // Size multiplier between levels
+	TotalSize               int64   // Target total database size
+	WriteBufferSize         int64   // Base memtable/L0 file size
+	LevelSizeMultiplier     float64 // Size multiplier between levels
 	LevelFileSizeMultiplier float64 // File size multiplier between levels
-	MaxLevels             int     // Maximum number of levels (including L0)
+	MaxLevels               int     // Maximum number of levels (including L0)
 }
 
 func main() {
 	reader := bufio.NewReader(os.Stdin)
 	cfg := Config{
-		TotalSize:             500 * GiB,
-		WriteBufferSize:       4 * MiB,
-		LevelSizeMultiplier:   10.0,
+		TotalSize:               500 * GiB,
+		WriteBufferSize:         4 * MiB,
+		LevelSizeMultiplier:     10.0,
 		LevelFileSizeMultiplier: 2.0,
-		MaxLevels:             7,
+		MaxLevels:               7,
 	}
 
 	fmt.Println("LSM Tree Layout Calculator")
 	fmt.Println("==========================")
-	fmt.Println("Press Enter to accept defaults shown in brackets.\n")
+	fmt.Println("Press Enter to accept defaults shown in brackets.")
 
 	cfg.TotalSize = promptSize(reader, "Total database size", cfg.TotalSize)
 	cfg.WriteBufferSize = promptSize(reader, "Write buffer size (L0 file size)", cfg.WriteBufferSize)
@@ -165,16 +165,13 @@ func printLayout(cfg Config) {
 			levelAboveL1 := level - 1
 			fileMult := 1.0
 			levelMult := 1.0
-			for i := 0; i < levelAboveL1; i++ {
+			for range levelAboveL1 {
 				fileMult *= cfg.LevelFileSizeMultiplier
 				levelMult *= cfg.LevelSizeMultiplier
 			}
 			fileSize = int64(l1FileSize * fileMult)
 			levelSize = int64(l1LevelSize * levelMult)
-			fileCount = levelSize / fileSize
-			if fileCount < 1 {
-				fileCount = 1
-			}
+			fileCount = max(levelSize/fileSize, 1)
 		}
 
 		// Stop if adding this level would significantly exceed target size
