@@ -161,9 +161,11 @@ func printLayout(cfg Config) {
 		} else {
 			// Each level: file size grows by LevelFileSizeMultiplier
 			// Level size grows by LevelSizeMultiplier
+			// L2 = L1 * multiplier^1, L3 = L1 * multiplier^2, etc.
+			levelAboveL1 := level - 1
 			fileMult := 1.0
 			levelMult := 1.0
-			for i := 2; i <= level; i++ {
+			for i := 0; i < levelAboveL1; i++ {
 				fileMult *= cfg.LevelFileSizeMultiplier
 				levelMult *= cfg.LevelSizeMultiplier
 			}
@@ -175,11 +177,17 @@ func printLayout(cfg Config) {
 			}
 		}
 
+		// Stop if adding this level would significantly exceed target size
+		// Allow some overage for the last level
+		if totalSize > 0 && totalSize+levelSize > cfg.TotalSize*2 {
+			break
+		}
+
 		fmt.Printf("L%-7d  %15s  %15s  %12d\n", level, formatSize(fileSize), formatSize(levelSize), fileCount)
 		totalSize += levelSize
 		totalFiles += fileCount
 
-		// Stop if we've exceeded target size
+		// Stop if we've met or exceeded target size
 		if totalSize >= cfg.TotalSize {
 			break
 		}
