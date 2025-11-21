@@ -194,7 +194,7 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 	}
 
 	// Apply the changes to the manifest to make the new files live.
-	if err = cm.versions.LogAndApply(edit); err != nil {
+	if err = cm.versions.LogAndApply(edit, nil); err != nil {
 		compaction.Cleanup()
 		return fmt.Errorf("failed to apply compaction version edit: %w", err)
 	}
@@ -766,7 +766,7 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 		for _, id := range obsoleteIDs {
 			edit.RemoveRangeDelete(id)
 		}
-		if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
+		if err := cm.versions.LogAndApply(NewVersionEdit(), edit); err != nil {
 			cm.logger.Error("Failed to remove obsolete range deletes", "error", err)
 		} else {
 			cm.logger.Debug("Removed obsolete range deletes", "count", len(obsoleteIDs))
@@ -778,7 +778,7 @@ func (cm *CompactionManager) cleanupObsoleteRangeDeletes() {
 func (cm *CompactionManager) removeRangeDelete(id uint64) {
 	edit := NewRangeDeleteEdit()
 	edit.RemoveRangeDelete(id)
-	if err := cm.versions.LogAndApplyWithRangeDeletes(NewVersionEdit(), edit); err != nil {
+	if err := cm.versions.LogAndApply(NewVersionEdit(), edit); err != nil {
 		cm.logger.Error("Failed to remove range delete", "error", err, "id", id)
 	} else {
 		cm.logger.Debug("Removed range delete", "id", id)

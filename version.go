@@ -295,13 +295,8 @@ func (vs *VersionSet) CurrFileNumber() uint64 {
 	return vs.nextFileNum
 }
 
-// LogAndApply applies a version edit and makes it the current version
-func (vs *VersionSet) LogAndApply(edit *VersionEdit) error {
-	return vs.LogAndApplyWithRangeDeletes(edit, nil)
-}
-
 // LogAndApplyWithRangeDeletes applies both version and range delete edits
-func (vs *VersionSet) LogAndApplyWithRangeDeletes(edit *VersionEdit, rangeDeleteEdit *RangeDeleteEdit) error {
+func (vs *VersionSet) LogAndApply(edit *VersionEdit, rangeDeleteEdit *RangeDeleteEdit) error {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 

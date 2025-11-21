@@ -371,7 +371,7 @@ func TestRangeDeleteOverlappingAndAdjacent(t *testing.T) {
 	defer db.Close()
 
 	// Write keys 0-19
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		key := fmt.Sprintf("key%02d", i)
 		val := fmt.Sprintf("val%02d", i)
 		if err := db.Put([]byte(key), []byte(val)); err != nil {
@@ -400,7 +400,7 @@ func TestRangeDeleteOverlappingAndAdjacent(t *testing.T) {
 	}
 
 	// Verify
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		key := fmt.Sprintf("key%02d", i)
 		_, err := db.Get([]byte(key))
 

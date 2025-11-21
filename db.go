@@ -366,13 +366,7 @@ func (db *DB) backgroundFlusher() {
 
 		db.mu.Lock()
 		// Apply the version edit to the manifest to make the new SSTable "live".
-		var verr error
-		if rangeDeleteEdit != nil {
-			verr = db.versions.LogAndApplyWithRangeDeletes(edit, rangeDeleteEdit)
-		} else {
-			verr = db.versions.LogAndApply(edit)
-		}
-		if verr != nil {
+		if verr := db.versions.LogAndApply(edit, rangeDeleteEdit); verr != nil {
 			// Also very bad. If the manifest write fails, we can't recover.
 			db.logger.Error("FATAL: Version Edit Failed (flushing memtable)", "error", verr, "sstable_num", sstableNum)
 			db.closed.Store(true)

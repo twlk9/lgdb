@@ -23,7 +23,7 @@ func BenchmarkIterationWithRangeDeletes(b *testing.B) {
 	const numDeletes = 1000
 
 	// Write a large number of keys.
-	for i := 0; i < numKeys; i++ {
+	for i := range numKeys {
 		key := fmt.Sprintf("key%05d", i)
 		val := fmt.Sprintf("val%05d", i)
 		if err := db.Put([]byte(key), []byte(val)); err != nil {
@@ -32,7 +32,7 @@ func BenchmarkIterationWithRangeDeletes(b *testing.B) {
 	}
 
 	// Create many small, non-overlapping range deletions.
-	for i := 0; i < numDeletes; i++ {
+	for i := range numDeletes {
 		startIdx := i * (numKeys / numDeletes)
 		startKey := fmt.Sprintf("key%05d", startIdx)
 		endKey := fmt.Sprintf("key%05d", startIdx+1)
@@ -41,9 +41,7 @@ func BenchmarkIterationWithRangeDeletes(b *testing.B) {
 		}
 	}
 
-	b.ResetTimer()
-
-	for n := 0; n < b.N; n++ {
+	for b.Loop() {
 		iter := db.NewIterator(nil)
 		count := 0
 		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
