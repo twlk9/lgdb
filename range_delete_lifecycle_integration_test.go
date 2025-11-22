@@ -57,7 +57,6 @@ func TestRangeDeleteCleanupNoOverlap(t *testing.T) {
 	if err := db.Flush(); err != nil {
 		t.Fatalf("Flush after range delete failed: %v", err)
 	}
-	db.WaitForCompaction()
 
 	// Verify .rangedel file was created
 	rangeDelFiles, err := filepath.Glob(filepath.Join(dir, "*.rangedel"))

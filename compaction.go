@@ -190,12 +190,14 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 	edit, err := cm.doCompaction(compaction, version)
 	if err != nil {
 		compaction.Cleanup()
+		cm.logger.Error("Compaction failed", "error", err)
 		return fmt.Errorf("compaction failed: %w", err)
 	}
 
 	// Apply the changes to the manifest to make the new files live.
 	if err = cm.versions.LogAndApply(edit, nil); err != nil {
 		compaction.Cleanup()
+		cm.logger.Error("Failed to apply compaction version edit", "error", err)
 		return fmt.Errorf("failed to apply compaction version edit: %w", err)
 	}
 
@@ -214,6 +216,7 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 		v := cm.versions.GetCurrentVersion()
 		defer v.MarkForCleanup()
 		if len(v.GetFiles(0)) < cm.options.L0StopWritesTrigger {
+			cm.logger.Debug("Broadcasting flush backpressure signal after L0 compaction")
 			cm.flushBP.Broadcast() // Wake up any waiting writers.
 		}
 	}
@@ -224,23 +227,28 @@ func (cm *CompactionManager) doCompactionWork(compaction *Compaction, version *V
 // pickCompaction is the brain. It decides which compaction is the most important
 // to run right now, based on a priority list.
 func (cm *CompactionManager) pickCompaction(version *Version) []*Compaction {
+	cm.logger.Debug("Picking compaction")
 	// Priority 1: L0 compaction. This is the most urgent to keep the write path clear.
 	if c := cm.pickL0Compaction(version); c != nil {
+		cm.logger.Debug("Picked L0 compaction")
 		return []*Compaction{c}
 	}
 
 	// Priority 2: Size-based compaction for other levels.
 	if c := cm.pickLevelCompaction(version); c != nil {
+		cm.logger.Debug("Picked level compaction", "level", c.level)
 		return []*Compaction{c}
 	}
 
 	// Priority 3: Proactively compact to get rid of range delete tombstones.
 	if cm.options.RangeDeleteCompactionEnabled {
 		if cs := cm.pickRangeDeleteCompaction(version); cs != nil {
+			cm.logger.Debug("Picked range delete compaction", "count", len(cs))
 			return cs
 		}
 	}
 
+	cm.logger.Debug("No compaction picked")
 	return nil
 }
 

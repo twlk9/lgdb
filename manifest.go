@@ -658,10 +658,12 @@ func RecoverFromManifest(dir string, vs *VersionSet) error {
 
 	// Recover range deletes from paired range delete file
 	rangeDeletes, err := RecoverRangeDeletes(vs.dir, manifestNum)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to recover range deletes: %w", err)
 	}
-	version.rangeDeletes = rangeDeletes
+	if rangeDeletes != nil {
+		version.rangeDeletes = rangeDeletes
+	}
 
 	// Track max range delete ID for next allocation
 	maxRangeDeleteID := uint64(0)

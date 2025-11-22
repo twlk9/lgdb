@@ -15,6 +15,9 @@ var (
 	// ErrDBClosed is returned when operating on a closed database
 	ErrDBClosed = errors.New("database is closed")
 
+	// ErrDBAlreadyOpen is returned when attempting to open a database that is already locked by another process
+	ErrDBAlreadyOpen = errors.New("database is already open by another process")
+
 	// ErrReadOnly is returned when attempting to write to a read-only database
 	ErrReadOnly = errors.New("database is read-only")
 

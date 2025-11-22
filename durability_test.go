@@ -1,6 +1,7 @@
 package lgdb
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,9 @@ func TestCrashDuringWALWrite(t *testing.T) {
 	db.mu.Lock()
 	if err := db.wal.Close(); err != nil {
 		t.Logf("WAL close during crash simulation: %v", err)
+	}
+	if err := db.locker.Unlock(); err != nil {
+		t.Logf("Locker unlock during crash simulation: %v", err)
 	}
 	db.mu.Unlock()
 
@@ -155,6 +159,9 @@ func TestCrashDuringMemtableFlush(t *testing.T) {
 	// Force close database to simulate crash during or just after flush
 	db.mu.Lock()
 	db.wal.Close()
+	if err := db.locker.Unlock(); err != nil {
+		t.Logf("Locker unlock during crash simulation: %v", err)
+	}
 	db.mu.Unlock()
 
 	// Look for any incomplete SSTable files (ones that might be partially written)
@@ -248,6 +255,9 @@ func TestCrashDuringCompaction(t *testing.T) {
 	// Simulate crash during compaction by forcefully closing
 	db.mu.Lock()
 	db.wal.Close()
+	if err := db.locker.Unlock(); err != nil {
+		t.Logf("Locker unlock during crash simulation: %v", err)
+	}
 	db.mu.Unlock()
 
 	// Look for any temporary compaction files that might exist
@@ -343,45 +353,48 @@ func TestDataSafetyGracefulClose(t *testing.T) {
 
 // TestDataSafetyCrashSimulation tests data safety with simulated crash (no close)
 func TestDataSafetyCrashSimulation(t *testing.T) {
+	tmpDir := t.TempDir()
+	defer os.RemoveAll(tmpDir)
+
 	opts := DefaultOptions()
+	opts.Path = tmpDir
+	opts.CreateIfMissing = true
 
-	bdb := newBenchmarkDB(&testing.B{}, opts)
-	bdb.generateKeys(100, 16)
-	bdb.generateValues(100, 100)
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
 
-	// Write some data
+	keys := make([][]byte, 10)
+	values := make([][]byte, 10)
 	for i := range 10 {
-		key := bdb.keys[i]
-		value := bdb.values[i]
-		if err := bdb.db.Put(key, value); err != nil {
+		keys[i] = []byte(fmt.Sprintf("key%d", i))
+		values[i] = []byte(fmt.Sprintf("value%d", i))
+		if err := db.Put(keys[i], values[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	// Simulate crash - don't call Close(), just abandon the DB
-	dbPath := bdb.dir
+	if err := db.locker.Unlock(); err != nil {
+		t.Fatalf("Failed to unlock database: %v", err)
+	}
 
 	// Force a small delay to let any pending syncs complete
 	time.Sleep(50 * time.Millisecond)
 
 	// Reopen and check what survived
-	opts.Path = dbPath
-	db2, err := Open(opts)
+	reopenedDB, err := Open(opts)
 	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
 	}
-	defer func() {
-		db2.Close()
-		os.RemoveAll(dbPath)
-	}()
+	defer reopenedDB.Close()
 
 	// Count how many keys survived the "crash"
 	recovered := 0
 	for i := range 10 {
-		key := bdb.keys[i]
-		expectedValue := bdb.values[i]
-
-		value, err := db2.Get(key)
-		if err == nil && string(value) == string(expectedValue) {
+		value, err := reopenedDB.Get(keys[i])
+		if err == nil && string(value) == string(values[i]) {
 			recovered++
 		}
 	}
@@ -396,44 +409,47 @@ func TestDataSafetyCrashSimulation(t *testing.T) {
 
 // TestDataLossStressTest more aggressive test to detect data loss
 func TestDataLossStressTest(t *testing.T) {
+	tmpDir := t.TempDir()
+	defer os.RemoveAll(tmpDir)
+
 	opts := DefaultOptions()
+	opts.Path = tmpDir
+	opts.CreateIfMissing = true
 
-	bdb := newBenchmarkDB(&testing.B{}, opts)
-	bdb.generateKeys(1000, 16)
-	bdb.generateValues(1000, 100)
-	defer func() {
-		os.RemoveAll(bdb.dir)
-	}()
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
 
+	keys := make([][]byte, 100)
+	values := make([][]byte, 100)
 	// Write data very rapidly
 	for i := range 100 {
-		key := bdb.keys[i]
-		value := bdb.values[i]
-		if err := bdb.db.Put(key, value); err != nil {
+		keys[i] = []byte(fmt.Sprintf("key%d", i))
+		values[i] = []byte(fmt.Sprintf("value%d", i))
+		if err := db.Put(keys[i], values[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	dbPath := bdb.dir
-
 	// Immediate crash simulation - don't wait for any syncs
 	// Don't call Close() to simulate hard crash
+	if err := db.locker.Unlock(); err != nil {
+		t.Fatalf("Failed to unlock database: %v", err)
+	}
 
 	// Reopen immediately
-	opts.Path = dbPath
-	db2, err := Open(opts)
+	reopenedDB, err := Open(opts)
 	if err != nil {
+		t.Fatalf("Failed to reopen database: %v", err)
 	}
-	defer db2.Close()
+	defer reopenedDB.Close()
 
 	// Count survivors
 	recovered := 0
 	for i := range 100 {
-		key := bdb.keys[i]
-		expectedValue := bdb.values[i]
-
-		value, err := db2.Get(key)
-		if err == nil && string(value) == string(expectedValue) {
+		value, err := reopenedDB.Get(keys[i])
+		if err == nil && string(value) == string(values[i]) {
 			recovered++
 		}
 	}

@@ -295,7 +295,7 @@ func (vs *VersionSet) CurrFileNumber() uint64 {
 	return vs.nextFileNum
 }
 
-// LogAndApplyWithRangeDeletes applies both version and range delete edits
+// LogAndApply applies both version and range delete edits
 func (vs *VersionSet) LogAndApply(edit *VersionEdit, rangeDeleteEdit *RangeDeleteEdit) error {
 	vs.mu.Lock()
 	defer vs.mu.Unlock()

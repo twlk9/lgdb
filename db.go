@@ -155,6 +155,8 @@ type DB struct {
 	fileCache *FileCache
 	// Caches uncompressed SSTable data blocks to speed up reads.
 	blockCache *sstable.BlockCache
+	// Ensures only one process can open the database at a time.
+	locker Locker
 }
 
 // Open is the grand entrance. It does everything: validates options, creates the DB path,
@@ -198,6 +200,20 @@ func Open(opts *Options) (*DB, error) {
 		return nil, err
 	}
 
+	locker, err := newFileLocker(opts.Path)
+	if err != nil {
+		logger.Error("Failed to create file locker", "error", err, "path", opts.Path)
+		return nil, err
+	}
+	if err := locker.Lock(); err != nil {
+		if errors.Is(err, ErrDBAlreadyOpen) {
+			logger.Error("Database is already open by another process, cannot acquire lock", "path", opts.Path)
+			return nil, ErrDBAlreadyOpen
+		}
+		logger.Error("Failed to acquire file lock", "error", err, "path", opts.Path)
+		return nil, err
+	}
+
 	db := &DB{
 		options:          opts,
 		defaultWriteOpts: &WriteOptions{Sync: opts.Sync},
@@ -206,6 +222,7 @@ func Open(opts *Options) (*DB, error) {
 		blockCache: sstable.NewBlockCache(opts.BlockCacheSize, func(value []byte) {
 			bufferpool.PutBuffer(value)
 		}),
+		locker: locker,
 	}
 
 	db.fileCache = NewFileCache(opts.GetFileCacheSize(), db.blockCache, logger)
@@ -315,6 +332,12 @@ func (db *DB) Close() error {
 	}
 	if db.versions != nil {
 		if err := db.versions.Close(); err != nil {
+			return err
+		}
+	}
+
+	if db.locker != nil {
+		if err := db.locker.Unlock(); err != nil {
 			return err
 		}
 	}
@@ -491,7 +514,6 @@ func (db *DB) write(key, value []byte, kind keys.Kind, opts *WriteOptions) error
 		}
 		newmemt := memtable.NewMemtable(db.options.WriteBufferSize)
 		db.rotateMemtable(newmemt)
-		db.updateCurrentVersion()
 		db.flushTrigger.Signal() // Wake up the flusher.
 	}
 	db.mu.Unlock()
@@ -825,14 +847,6 @@ func (db *DB) loadCurrentVersion() *Version {
 // and atomically swaps it into place. This is a critical step after any structural change,
 // like a flush or compaction, to make the changes visible to new readers.
 func (db *DB) updateCurrentVersion() {
-	// The list of memtables needs to be in reverse chronological order (newest first).
-	memtables := make([]*memtable.MemTable, 0, 1+len(db.immutableMemtables))
-	memtables = append(memtables, db.memtable) // Active is newest.
-	// Immutable memtables are already newest-last, so iterate backwards.
-	for i := len(db.immutableMemtables) - 1; i >= 0; i-- {
-		memtables = append(memtables, db.immutableMemtables[i])
-	}
-
 	newVersion := db.versions.CreateVersionSnapshot(db.seq.Load())
 	oldVersion := db.currentVersion.Swap(newVersion)
 
@@ -862,7 +876,6 @@ func (db *DB) Flush() error {
 	}
 	newmemt := memtable.NewMemtable(db.options.WriteBufferSize)
 	db.rotateMemtable(newmemt)
-	db.updateCurrentVersion()
 	immutableCount := len(db.immutableMemtables)
 	db.flushTrigger.Signal()
 	db.mu.Unlock()
@@ -945,6 +958,7 @@ func (db *DB) WaitForCompaction() {
 				db.logger.Error("Compaction failed during WaitForCompaction", "error", err)
 				return
 			}
+			db.updateCurrentVersion() // Explicitly update version after compaction
 		case <-time.After(100 * time.Millisecond):
 			// No compaction happened, so there was probably no work to do.
 			return
