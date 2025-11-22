@@ -37,15 +37,14 @@ type SSTableReaderAtCloser interface {
 	io.Closer
 }
 
-// SSTableReader reads SSTables from disk
 type SSTableReader struct {
-	file       SSTableReaderAtCloser
-	size       int64
-	indexBlock *Block
-	logger     *slog.Logger
-	path       string // For better error context
-	fileNum    uint64
-	blockCache *BlockCache
+	file             SSTableReaderAtCloser
+	size             int64
+	indexBlockHandle BlockHandle
+	logger           *slog.Logger
+	path             string // For better error context
+	fileNum          uint64
+	blockCache       *BlockCache
 
 	// Cached metadata
 	smallestKey keys.EncodedKey
@@ -154,66 +153,17 @@ func (r *SSTableReader) readFooter() error {
 	if n == 0 {
 		return fmt.Errorf("invalid index block handle")
 	}
+	r.indexBlockHandle = indexHandle
 
-	indexOffset := indexHandle.Offset
-	indexSize := indexHandle.Size
-
-	// Read and decompress index block (now compressed like GoLevelDB)
-	indexData := bufferpool.GetBuffer(int(indexSize))
-	defer bufferpool.PutBuffer(indexData)
-	_, err = r.file.ReadAt(indexData, int64(indexOffset))
-	if err != nil {
-		r.logger.Error("Failed to read index block", "error", err, "sstable", r.path, "offset", indexOffset, "size", indexSize)
-		return err
-	}
-
-	// Check for minimum size (trailer)
-	if len(indexData) < BlockTrailerSize {
-		return fmt.Errorf("index block too small for trailer: %d bytes", len(indexData))
-	}
-
-	// Extract compression type from trailer (1 byte before CRC32)
-	compressionType := indexData[len(indexData)-BlockTrailerSize]
-
-	// Extract stored CRC32 checksum (4 bytes after compression type)
-	storedCRC := binary.LittleEndian.Uint32(indexData[len(indexData)-BlockTrailerSize+1:])
-
-	// Extract index block data (without trailer)
-	indexBlockData := indexData[:len(indexData)-BlockTrailerSize]
-
-	// Verify CRC32-Castagnoli checksum (skip if 0 for backward compatibility with older format)
-	if storedCRC != 0 {
-		computedCRC := crc32.Checksum(indexBlockData, crc32.MakeTable(crc32.Castagnoli))
-		if storedCRC != computedCRC {
-			r.logger.Error("Index block CRC32 mismatch", "sstable", r.path, "stored_crc", storedCRC, "computed_crc", computedCRC)
-			return fmt.Errorf("index block CRC32 mismatch: stored=%d, computed=%d", storedCRC, computedCRC)
-		}
-	}
-
-	// Decompress the index block data
-	estimatedSize, err := compression.EstimateDecompressedSize(indexBlockData, compressionType)
-	if err != nil {
-		return fmt.Errorf("failed to estimate decompressed size for index block: %w", err)
-	}
-	tempBuf := bufferpool.GetBuffer(estimatedSize)
-	defer bufferpool.PutBuffer(tempBuf)
-	decompressedIndexData, err := compression.DecompressBlock(tempBuf, indexBlockData, compressionType)
-	if err != nil {
-		return fmt.Errorf("failed to decompress index block: %w", err)
-	}
-	// Copy to right-sized buffer to avoid holding onto oversized allocation
-	decompressedIndexData = append([]byte(nil), decompressedIndexData...)
-
-	// Parse decompressed index block
-	r.indexBlock, err = r.parseBlock(decompressedIndexData)
+	indexBlock, err := r.readIndexBlock()
 	if err != nil {
 		return err
 	}
 
 	// Extract actual key range by reading first and last data blocks
-	if r.indexBlock.numEntries > 0 {
+	if indexBlock.numEntries > 0 {
 		// Get first key from first data block
-		err := r.indexBlock.getEntry(0, r.buffers)
+		err := indexBlock.getEntry(0, r.buffers)
 		if err != nil {
 			return err
 		}
@@ -230,7 +180,7 @@ func (r *SSTableReader) readFooter() error {
 		}
 
 		// Get last key from last data block
-		err = r.indexBlock.getEntry(int(r.indexBlock.numEntries-1), r.buffers)
+		err = indexBlock.getEntry(int(indexBlock.numEntries-1), r.buffers)
 		if err != nil {
 			return err
 		}
@@ -313,7 +263,12 @@ func (r *SSTableReader) Get(k keys.EncodedKey) ([]byte, keys.EncodedKey) {
 
 // findDataBlock finds the data block that might contain the encoded internal key
 func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (BlockHandle, bool) {
-	if r.indexBlock.numEntries == 0 {
+	indexBlock, err := r.readIndexBlock()
+	if err != nil {
+		return BlockHandle{}, false
+	}
+
+	if indexBlock.numEntries == 0 {
 		return BlockHandle{}, false
 	}
 
@@ -323,7 +278,7 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 	// If separator[i] <= key, then key belongs in a later block
 
 	left := 0
-	right := int(r.indexBlock.numEntries) - 1
+	right := int(indexBlock.numEntries) - 1
 	result := -1
 
 	// Use local entry buffers to avoid race conditions between concurrent reads
@@ -332,7 +287,7 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 
 	for left <= right {
 		mid := left + (right-left)/2
-		err := r.indexBlock.getEntry(mid, localBuffers)
+		err := indexBlock.getEntry(mid, localBuffers)
 		if err != nil {
 			return BlockHandle{}, false
 		}
@@ -351,7 +306,7 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 
 	// If we found a separator > key, use that block
 	if result >= 0 {
-		err := r.indexBlock.getEntry(result, localBuffers)
+		err := indexBlock.getEntry(result, localBuffers)
 		if err != nil {
 			return BlockHandle{}, false
 		}
@@ -363,7 +318,7 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 	}
 
 	// If no separator > key, then key is in the last block
-	err := r.indexBlock.getEntry(int(r.indexBlock.numEntries-1), localBuffers)
+	err = indexBlock.getEntry(int(indexBlock.numEntries-1), localBuffers)
 	if err != nil {
 		return BlockHandle{}, false
 	}
@@ -373,6 +328,64 @@ func (r *SSTableReader) findDataBlock(encodedInternalKey keys.EncodedKey) (Block
 		return BlockHandle{}, false
 	}
 	return handle, true
+}
+
+// readIndexBlock reads the index block from disk or cache
+func (r *SSTableReader) readIndexBlock() (*Block, error) {
+	cacheKey := GenerateCacheKey(r.fileNum, r.indexBlockHandle.Offset)
+
+	// 1. Check cache first
+	if r.blockCache != nil {
+		if cachedBlock, found := r.blockCache.Get(cacheKey); found {
+			return r.parseBlock(cachedBlock)
+		}
+	}
+
+	// 2. Cache miss - read from file
+	data := bufferpool.GetBuffer(int(r.indexBlockHandle.Size))
+	defer bufferpool.PutBuffer(data)
+
+	_, err := r.file.ReadAt(data, int64(r.indexBlockHandle.Offset))
+	if err != nil {
+		r.logger.Error("Failed to read index block", "error", err, "sstable", r.path, "offset", r.indexBlockHandle.Offset, "size", r.indexBlockHandle.Size)
+		return nil, err
+	}
+
+	if len(data) < BlockTrailerSize {
+		return nil, fmt.Errorf("index block too small for trailer")
+	}
+
+	compressionType := data[len(data)-BlockTrailerSize]
+	storedCRC := binary.LittleEndian.Uint32(data[len(data)-BlockTrailerSize+1:])
+	blockData := data[:len(data)-BlockTrailerSize]
+
+	if storedCRC != 0 {
+		computedCRC := crc32.Checksum(blockData, crc32.MakeTable(crc32.Castagnoli))
+		if storedCRC != computedCRC {
+			r.logger.Error("Index block CRC32 mismatch", "sstable", r.path, "offset", r.indexBlockHandle.Offset, "stored_crc", storedCRC, "computed_crc", computedCRC)
+			return nil, fmt.Errorf("index block CRC32 mismatch: stored=%d, computed=%d", storedCRC, computedCRC)
+		}
+	}
+
+	estimatedSize, err := compression.EstimateDecompressedSize(blockData, compressionType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to estimate decompressed size for index block: %w", err)
+	}
+	tempBuf := bufferpool.GetBuffer(estimatedSize)
+	defer bufferpool.PutBuffer(tempBuf)
+
+	decompressedData, err := compression.DecompressBlock(tempBuf, blockData, compressionType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress index block: %w", err)
+	}
+	decompressedData = append([]byte(nil), decompressedData...)
+
+	// 3. Put decompressed data into cache
+	if r.blockCache != nil {
+		r.blockCache.Put(cacheKey, decompressedData)
+	}
+
+	return r.parseBlock(decompressedData)
 }
 
 // readDataBlock reads a data block from disk
@@ -748,9 +761,13 @@ type SSTableIterator struct {
 
 // NewIterator creates a new SSTable iterator
 func (r *SSTableReader) NewIterator(noBlockCache bool) *SSTableIterator {
+	indexBlock, err := r.readIndexBlock()
+	if err != nil {
+		return &SSTableIterator{err: err}
+	}
 	return &SSTableIterator{
 		reader:       r,
-		indexIter:    r.indexBlock.NewIterator(),
+		indexIter:    indexBlock.NewIterator(),
 		buffers:      NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
 		noBlockCache: noBlockCache,
 	}
@@ -758,9 +775,13 @@ func (r *SSTableReader) NewIterator(noBlockCache bool) *SSTableIterator {
 
 // NewIteratorWithBounds creates a new SSTable iterator with bounds
 func (r *SSTableReader) NewIteratorWithBounds(bounds *keys.Range, noBlockCache bool) *SSTableIterator {
+	indexBlock, err := r.readIndexBlock()
+	if err != nil {
+		return &SSTableIterator{err: err}
+	}
 	iter := &SSTableIterator{
 		reader:       r,
-		indexIter:    r.indexBlock.NewIterator(),
+		indexIter:    indexBlock.NewIterator(),
 		buffers:      NewEntryBuffers(512, 512), // Per-iterator buffers for key-value operations
 		bounds:       bounds,
 		noBlockCache: noBlockCache,
@@ -806,21 +827,27 @@ func (it *SSTableIterator) SeekToLast() {
 func (it *SSTableIterator) Seek(target keys.EncodedKey) {
 	it.err = nil
 
+	indexBlock, err := it.reader.readIndexBlock()
+	if err != nil {
+		it.err = err
+		return
+	}
+
 	// Use separator-aware logic to find the right block, like findDataBlock does
 	// but also position the index iterator correctly for Next() operations
-	if it.reader.indexBlock.numEntries == 0 {
+	if indexBlock.numEntries == 0 {
 		it.blockIter = nil
 		return
 	}
 
 	// Binary search for the appropriate block using separator semantics
-	numEntries := int(it.reader.indexBlock.numEntries)
+	numEntries := int(indexBlock.numEntries)
 	left, right := 0, numEntries-1
 	foundBlockIndex := numEntries - 1 // Default to last block
 
 	for left <= right {
 		mid := left + (right-left)/2
-		err := it.reader.indexBlock.getEntry(mid, it.buffers)
+		err := indexBlock.getEntry(mid, it.buffers)
 		if err != nil {
 			it.err = err
 			return

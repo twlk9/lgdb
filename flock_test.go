@@ -70,4 +70,3 @@ func TestFileLocking(t *testing.T) {
 func IsDBAlreadyOpen(err error) bool {
 	return strings.Contains(err.Error(), "another process might be using the database")
 }
-

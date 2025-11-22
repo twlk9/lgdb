@@ -368,8 +368,8 @@ func TestDataSafetyCrashSimulation(t *testing.T) {
 	keys := make([][]byte, 10)
 	values := make([][]byte, 10)
 	for i := range 10 {
-		keys[i] = []byte(fmt.Sprintf("key%d", i))
-		values[i] = []byte(fmt.Sprintf("value%d", i))
+		keys[i] = fmt.Appendf(nil, "key%d", i)
+		values[i] = fmt.Appendf(nil, "value%d", i)
 		if err := db.Put(keys[i], values[i]); err != nil {
 			t.Fatal(err)
 		}
@@ -425,8 +425,8 @@ func TestDataLossStressTest(t *testing.T) {
 	values := make([][]byte, 100)
 	// Write data very rapidly
 	for i := range 100 {
-		keys[i] = []byte(fmt.Sprintf("key%d", i))
-		values[i] = []byte(fmt.Sprintf("value%d", i))
+		keys[i] = fmt.Appendf(nil, "key%d", i)
+		values[i] = fmt.Appendf(nil, "value%d", i)
 		if err := db.Put(keys[i], values[i]); err != nil {
 			t.Fatal(err)
 		}

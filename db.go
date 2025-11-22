@@ -398,16 +398,11 @@ func (db *DB) backgroundFlusher() {
 			return
 		}
 
-		// Success! Update version FIRST to make SSTable visible, THEN remove memtable
 		db.updateCurrentVersion()
 		db.removeFromImmutableMemtables(mt)
 		db.flushBP.Broadcast() // Tell waiting writers they can proceed.
 		db.mu.Unlock()
-
-		// Close the memtable AFTER version update so new iterators see the SSTable
 		mt.Close()
-
-		// After a flush, it's a good time to check if compactions are needed.
 		db.triggerEpochCleanup()
 		db.compactionManager.ScheduleCompaction()
 	}
@@ -958,7 +953,7 @@ func (db *DB) WaitForCompaction() {
 				db.logger.Error("Compaction failed during WaitForCompaction", "error", err)
 				return
 			}
-			db.updateCurrentVersion() // Explicitly update version after compaction
+			db.updateCurrentVersion()
 		case <-time.After(100 * time.Millisecond):
 			// No compaction happened, so there was probably no work to do.
 			return
